@@ -839,12 +839,14 @@ class Board:
         return arg[0] + "," + arg[1]
     return " ".join([tuple_str(self.step_str(step)) for step in move])
   
-  def parse_move(self, val: str) -> Move:
+def parse_move(self, val: str) -> Move:
     strs = val.split(" ")
     steps = []
     for stepStr in strs:
-      args = stepStr.split(",")
-      steps.append(self.parse_step(args[0], args[1]))
+        args = stepStr.split(",")
+        # Add a check to handle the case when there's no second argument
+        second_arg = args[1] if len(args) > 1 else None
+        steps.append(self.parse_step(args[0], second_arg))
     
     return tuple(steps)
 
