@@ -85,6 +85,9 @@ cd muzero-general
 pip install -r requirements.lock
 ```
 
+Note: Python 3.10 is recommended. Gym installs can fail on Python 3.12.
+The `requirements.lock` file reflects older pinned dependencies; `requirements.txt` is recommended for newer Python environments.
+
 ### CPU install (PyTorch CPU wheel)
 
 ```bash
