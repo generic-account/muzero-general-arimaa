@@ -1,5 +1,6 @@
 import math
 import time
+import pathlib
 
 import numpy
 import ray
@@ -66,8 +67,12 @@ class SelfPlay:
                     {
                         "episode_length": len(game_history.action_history) - 1,
                         "total_reward": sum(game_history.reward_history),
-                        "mean_value": numpy.mean(
-                            [value for value in game_history.root_values if value]
+                        "mean_value": (
+                            numpy.mean(
+                                [value for value in game_history.root_values if value]
+                            )
+                            if any(game_history.root_values)
+                            else 0.0
                         ),
                     }
                 )
@@ -180,10 +185,36 @@ class SelfPlay:
                 game_history.reward_history.append(reward)
                 game_history.to_play_history.append(self.game.to_play())
 
+        reason = None
+        if not done and len(game_history.action_history) > self.config.max_moves:
+            reason = "max_moves"
+        elif hasattr(self.game, "termination_reason"):
+            try:
+                reason = self.game.termination_reason()
+            except Exception:
+                reason = None
+        elif done:
+            reason = "terminal"
+
+        game_history.termination_reason = reason
+        if reason:
+            print(f"Game ended: {reason}")
+            self._log_termination(reason, game_history)
+
         return game_history
 
     def close_game(self):
         self.game.close()
+
+    def _log_termination(self, reason, game_history):
+        log_path = pathlib.Path(self.config.results_path) / "termination.log"
+        try:
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    f"{time.time():.0f}\t{reason}\t{len(game_history.action_history) - 1}\n"
+                )
+        except OSError:
+            pass
 
     def select_opponent_action(self, opponent, stacked_observations):
         """
@@ -489,6 +520,7 @@ class GameHistory:
         self.child_visits = []
         self.root_values = []
         self.reanalysed_predicted_root_values = None
+        self.termination_reason = None
         # For PER
         self.priorities = None
         self.game_priority = None

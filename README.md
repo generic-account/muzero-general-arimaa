@@ -85,19 +85,55 @@ cd muzero-general
 pip install -r requirements.lock
 ```
 
+### CPU install (PyTorch CPU wheel)
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
+```
+
+### GPU install (PyTorch CUDA wheel)
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+pip install -r requirements.txt
+```
+
 ### Run
 
 ```bash
 python muzero.py
 ```
+This launches an interactive menu. Use it to train (self-play loop), render self-play games, or play against the current model.
+You can also run training directly with a game name:
+```bash
+python muzero.py tictactoe
+```
+To play against the model from the menu, select "Play against MuZero".
 To visualize the training results, run in a new terminal:
 ```bash
 tensorboard --logdir ./results
 ```
 
+### Run on CPU
+
+```bash
+python muzero.py arimaa '{"train_on_gpu": false, "selfplay_on_gpu": false, "reanalyse_on_gpu": false}'
+```
+
+### Run on GPU
+
+```bash
+python muzero.py arimaa '{"train_on_gpu": true, "selfplay_on_gpu": true, "reanalyse_on_gpu": true}'
+```
+
 ### Config
 
 You can adapt the configurations of each game by editing the `MuZeroConfig` class of the respective file in the [games folder](https://github.com/werner-duvaud/muzero-general/tree/master/games).
+
+## Arimaa notes
+
+This fork adds an Arimaa implementation in `games/arimaa.py` with a fixed step-based action space, randomized legal setups, and rule enforcement based on the official rules. It also includes shaping and termination logging to help training and debugging (see `results/<run>/termination.log`).
 
 ## Related work
 

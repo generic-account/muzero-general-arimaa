@@ -1,46 +1,88 @@
 import datetime
 import pathlib
+import random
+from typing import Any, Generator, NamedTuple, NewType, TypeVar
+
 import numpy
 import torch
-import random
+
 from .abstract_game import AbstractGame
-from typing import Any, Generator, NewType, TypeVar
+
+
+class StepSpec(NamedTuple):
+    old_pos: tuple[int, int]
+    new_pos: tuple[int, int]
+    op_old_pos: tuple[int, int] | None
+    op_new_pos: tuple[int, int] | None
+
+
+ACTION_LIST: list[StepSpec] | None = None
+ACTION_INDEX: dict[StepSpec, int] | None = None
+ACTION_END_TURN: int | None = None
+
+
+def init_actions():
+    global ACTION_LIST, ACTION_INDEX, ACTION_END_TURN
+    if ACTION_LIST is not None:
+        return
+    actions: list[StepSpec] = []
+    for old in all_positions():
+        for new in neighbors(old):
+            actions.append(StepSpec(old, new, None, None))
+    for old in all_positions():
+        for enemy in neighbors(old):
+            for op_new in neighbors(enemy):
+                if op_new == old:
+                    continue
+                actions.append(StepSpec(old, enemy, enemy, op_new))
+            for new in neighbors(old):
+                if new == enemy:
+                    continue
+                actions.append(StepSpec(old, new, enemy, old))
+    ACTION_LIST = actions
+    ACTION_INDEX = {spec: i for i, spec in enumerate(ACTION_LIST)}
+    ACTION_END_TURN = len(ACTION_LIST)
+
+
+def get_action_space():
+    init_actions()
+    return list(range(len(ACTION_LIST) + 1))  # type: ignore[arg-type]
 
 class MuZeroConfig:
     def __init__(self):
         self.seed = 0
         self.max_num_gpus = None
-        
+
         # Game
-        self.observation_shape = (12, 8, 8)  # 6 piece types * 2 colors, 8x8 board
-        self.action_space = list(range(2048))  # Approximate upper bound for Arimaa moves
+        self.observation_shape = (13, 8, 8)  # 6 piece types * 2 colors + side to move
+        self.action_space = get_action_space()
         self.players = list(range(2))  # Two players: Gold and Silver
         self.stacked_observations = 0
-        
+
         # Evaluate
         self.muzero_player = 0
         self.opponent = "expert"
-        
+
         # Self-Play
         self.num_workers = 1
         self.selfplay_on_gpu = False
-        self.max_moves = 200
+        self.max_moves = 400
         self.num_simulations = 800
         self.discount = 0.997
         self.temperature_threshold = None
-        
+
         # Root prior exploration noise
         self.root_dirichlet_alpha = 0.3
         self.root_exploration_fraction = 0.25
-        
+
         # UCB formula
         self.pb_c_base = 19652
         self.pb_c_init = 1.25
-        
+
         # Network
         self.network = "resnet"
         self.support_size = 300
-        
+
         # Residual Network
         self.downsample = False
         self.blocks = 20
@@ -51,7 +93,7 @@ class MuZeroConfig:
         self.resnet_fc_reward_layers = [256, 256]
         self.resnet_fc_value_layers = [256, 256]
         self.resnet_fc_policy_layers = [256, 256]
-        
+
         # Training
         self.results_path = pathlib.Path(__file__).resolve().parents[1] / "results" / pathlib.Path(__file__).stem / datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S")
         self.save_model = True
@@ -63,30 +105,34 @@ class MuZeroConfig:
         self.optimizer = "SGD"
         self.weight_decay = 1e-4
         self.momentum = 0.9
-        
+
         # Exponential learning rate schedule
         self.lr_init = 0.05
         self.lr_decay_rate = 0.1
         self.lr_decay_steps = 400000
-        
+
         # Replay Buffer
         self.replay_buffer_size = 1000000
         self.num_unroll_steps = 5
         self.td_steps = 200
         self.PER = True
         self.PER_alpha = 1.0
-        
+
         # Reanalyze
         self.use_last_model_value = True
         self.reanalyse_on_gpu = False
 
+        # Adjust the self play / training ratio
+        self.self_play_delay = 0
+        self.training_delay = 0
+        self.ratio = None
+
     def visit_softmax_temperature_fn(self, trained_steps):
         if trained_steps < 0.5 * self.training_steps:
             return 1.0
-        elif trained_steps < 0.75 * self.training_steps:
+        if trained_steps < 0.75 * self.training_steps:
             return 0.5
-        else:
-            return 0.25
+        return 0.25
 
 class Game(AbstractGame):
     def __init__(self, seed=None):
@@ -111,10 +157,10 @@ class Game(AbstractGame):
     def human_to_action(self):
         while True:
             try:
-                move_str = input("Enter your move (e.g. 'Ra1n Db2n Cc3n Dd4n'): ")
+                move_str = input("Enter step or 'end': ").strip()
                 return self.env.move_to_action(move_str)
-            except ValueError:
-                print("Invalid move. Try again.")
+            except ValueError as exc:
+                print(f"Invalid move: {exc}. Try again.")
 
     def action_to_string(self, action_number):
         return self.env.action_to_string(action_number)
@@ -122,21 +168,63 @@ class Game(AbstractGame):
     def expert_agent(self):
         return self.env.expert_action()
 
+    def termination_reason(self):
+        return self.env.termination_reason()
+
 class ArimaaEnv:
+    MATERIAL_VALUES = [1, 1, 2, 3, 4, 5]
+    MATERIAL_WEIGHT = 0.02
+    RABBIT_PROGRESS_WEIGHT = 0.005
+    RABBIT_COUNT_WEIGHT = 0.01
+    STEP_PENALTY = -0.0005
+    NO_PROGRESS_PENALTY = -0.001
+    END_TURN_NO_PROGRESS_BONUS = 0.002
+    SHAPING_CLIP = 0.5
+
     def __init__(self, seed=None):
         self.board = Board()
+        self.position_counts: dict[str, int] = {}
+        self.end_reason: str | None = None
+        self.turn_progress = 0.0
+        self.turn_steps_taken = 0
+        init_actions()
         if seed is not None:
             numpy.random.seed(seed)
 
     def reset(self):
         self.board = Board()
+        self._random_setup()
+        self.position_counts = {}
+        self.end_reason = None
+        self.turn_progress = 0.0
+        self.turn_steps_taken = 0
+        self.position_counts[self._position_key()] = 1
         return self.get_observation()
 
     def step(self, action):
-        move = self.action_to_move(action)
-        self.board.do_move(move)
+        player = self.board.state.player
+        prev_score = self._evaluate(player)
+        turn_ended = False
+        if action == ACTION_END_TURN:
+            if not self._end_turn_allowed():
+                raise StateException("Cannot end turn now.")
+            self._finish_turn()
+            turn_ended = True
+        else:
+            step = self.action_to_step(action)
+            self.board.do_step(step)
+            delta = self._evaluate(player) - prev_score
+            self.turn_steps_taken += 1
+            self.turn_progress += delta
+            if self.board.state.left == 0 and not self.board.state.end:
+                self._finish_turn()
+                turn_ended = True
         observation = self.get_observation()
-        reward = self.get_reward()
+        delta = self._evaluate(player) - prev_score
+        reward = self.get_reward(player, delta, action)
+        if turn_ended:
+            self.turn_progress = 0.0
+            self.turn_steps_taken = 0
         done = self.board.state.end
         return observation, reward, done
 
@@ -144,10 +232,22 @@ class ArimaaEnv:
         return self.board.state.player
 
     def legal_actions(self):
-        return list(range(len(list(self.board.possible_moves()))))
+        if self.board.state.end:
+            return []
+        actions = []
+        for step in self.board.possible_steps():
+            cost = self.board.step_cost(step)
+            if cost > self.board.state.left:
+                continue
+            action = self.step_to_action(step)
+            if action is not None:
+                actions.append(action)
+        if self._end_turn_allowed():
+            actions.append(ACTION_END_TURN)
+        return actions
 
     def get_observation(self):
-        observation = numpy.zeros((12, 8, 8), dtype=numpy.float32)
+        observation = numpy.zeros((13, 8, 8), dtype=numpy.float32)
         for y in range(8):
             for x in range(8):
                 piece = self.board[(x, y)]
@@ -155,32 +255,164 @@ class ArimaaEnv:
                     color, rank = parse_piece(piece)
                     channel = rank if color == COLORS.GOLD else rank + 6
                     observation[channel, y, x] = 1.0
+        observation[12, :, :] = 1.0 if self.board.state.player == COLORS.GOLD else 0.0
         return observation
 
-    def get_reward(self):
+    def get_reward(self, player, delta, action):
         if self.board.state.end:
-            return 1 if self.board.state.player == self.to_play() else -1
-        return 0
+            return 1 if self.board.state.player == player else -1
+        if delta is None:
+            return 0
+        reward = delta + self.STEP_PENALTY
+        if delta <= 0:
+            reward += self.NO_PROGRESS_PENALTY
+        if (
+            action == ACTION_END_TURN
+            and self.turn_steps_taken > 0
+            and self.turn_progress <= 0
+        ):
+            reward += self.END_TURN_NO_PROGRESS_BONUS
+        if reward > self.SHAPING_CLIP:
+            reward = self.SHAPING_CLIP
+        elif reward < -self.SHAPING_CLIP:
+            reward = -self.SHAPING_CLIP
+        return reward
 
     def render(self):
         self.board.print()
 
     def move_to_action(self, move_str):
-        move = self.board.parse_move(move_str)
-        return list(self.board.possible_moves()).index(move)
+        if move_str.lower() in {"end", "pass"}:
+            if not self._end_turn_allowed():
+                raise ValueError("End turn is not allowed.")
+            return ACTION_END_TURN
+        args = move_str.split(",")
+        step = self.board.parse_step(args[0], args[1] if len(args) > 1 else None)
+        action = self.step_to_action(step)
+        if action is None:
+            raise ValueError("Unknown action.")
+        return action
 
-    def action_to_move(self, action):
-        return list(self.board.possible_moves())[action]
+    def action_to_step(self, action):
+        init_actions()
+        if ACTION_LIST is None:
+            raise ValueError("Action list not initialized.")
+        spec = ACTION_LIST[action]
+        step = Step()
+        step.oldPos = spec.old_pos  # type: ignore[assignment]
+        step.newPos = spec.new_pos  # type: ignore[assignment]
+        step.opOldPos = spec.op_old_pos  # type: ignore[assignment]
+        step.opNewPos = spec.op_new_pos  # type: ignore[assignment]
+        return step
 
     def action_to_string(self, action):
-        move = self.action_to_move(action)
-        return self.board.move_str(move)
+        if action == ACTION_END_TURN:
+            return "end"
+        step = self.action_to_step(action)
+        step_str, push_str = self.board.step_str(step)
+        return step_str if push_str is None else f"{step_str},{push_str}"
 
     def expert_action(self):
         return numpy.random.choice(self.legal_actions())
 
-# The rest of the Arimaa implementation (Board, State, Step, etc.) goes here
-# Copy the relevant parts from the provided code
+    def termination_reason(self):
+        return self.end_reason
+
+    def step_to_action(self, step):
+        init_actions()
+        if ACTION_INDEX is None:
+            return None
+        spec = StepSpec(
+            step.oldPos,
+            step.newPos,
+            step.opOldPos,
+            step.opNewPos,
+        )
+        return ACTION_INDEX.get(spec)
+
+    def _random_setup(self):
+        for player in (COLORS.GOLD, COLORS.SILVER):
+            ranks = (
+                [RANKS.RABBIT] * 8
+                + [RANKS.CAT] * 2
+                + [RANKS.DOG] * 2
+                + [RANKS.HORSE] * 2
+                + [RANKS.CAMEL]
+                + [RANKS.ELEPHANT]
+            )
+            numpy.random.shuffle(ranks)
+            front = ranks[:8]
+            back = ranks[8:]
+            self.board.place_initial(player, [front, back])
+
+    def _end_turn_allowed(self):
+        if self.board.state.left == 4:
+            return False
+        if self.board.state.end:
+            return False
+        return not self._would_repeat_position(next_player=True)
+
+    def _finish_turn(self):
+        self.board.finish_turn(check_win=False)
+        winner, reason = self.board.check_win_reason()
+        if winner is None and self._would_repeat_position(next_player=False):
+            winner = 1 - self.board.state.player
+            reason = "repetition"
+        if winner is not None:
+            self.board.state.end = True
+            self.board.state.player = winner
+            self.end_reason = reason
+            return
+        self.position_counts[self._position_key()] = (
+            self.position_counts.get(self._position_key(), 0) + 1
+        )
+
+    def _position_key(self):
+        return self.board.encode_position(
+            player=self.board.state.player,
+            left=self.board.state.left,
+            setup=False,
+            end=False,
+        )
+
+    def _would_repeat_position(self, next_player: bool):
+        player = 1 - self.board.state.player if next_player else self.board.state.player
+        key = self.board.encode_position(
+            player=player,
+            left=4,
+            setup=False,
+            end=False,
+        )
+        return self.position_counts.get(key, 0) >= 2
+
+    def _evaluate(self, player):
+        material = 0.0
+        progress = 0.0
+        rabbits = 0.0
+        for y in range(8):
+            for x in range(8):
+                piece = self.board[(x, y)]
+                if piece is None:
+                    continue
+                color, rank = parse_piece(piece)
+                value = self.MATERIAL_VALUES[rank]
+                if color == player:
+                    material += value
+                else:
+                    material -= value
+                if rank == RANKS.RABBIT:
+                    prog = 7 - y if color == COLORS.GOLD else y
+                    if color == player:
+                        progress += prog
+                        rabbits += 1
+                    else:
+                        progress -= prog
+                        rabbits -= 1
+        return (
+            material * self.MATERIAL_WEIGHT
+            + progress * self.RABBIT_PROGRESS_WEIGHT
+            + rabbits * self.RABBIT_COUNT_WEIGHT
+        )
 
 # Arimaa-specific constants and helper functions
 
@@ -457,7 +689,8 @@ class Board:
     """
     Execute a single step and modify the state as needed
     """
-    if self.state.left == 0:
+    step_cost = self.step_cost(step)
+    if self.state.left < step_cost:
       raise StateException("Current player has no steps left.")
     toMove = self[step.oldPos]
     if toMove == None:
@@ -468,8 +701,29 @@ class Board:
     if self.is_frozen(step.oldPos):
       raise StateException("Cannot move a frozen piece.")
 
+    if not self._is_adjacent(step.oldPos, step.newPos):
+      raise StateException("Steps must move to adjacent squares.")
+
+    if rank == RANKS.RABBIT:
+      _, y_old = step.oldPos
+      _, y_new = step.newPos
+      if color == COLORS.GOLD and y_new > y_old:
+        raise StateException("Rabbits cannot move backward.")
+      if color == COLORS.SILVER and y_new < y_old:
+        raise StateException("Rabbits cannot move backward.")
+
     enemy = None
     if step.opOldPos != None:
+      if not self._is_adjacent(step.oldPos, step.opOldPos):
+        raise StateException("Push or pull requires adjacent enemy.")
+      if step.newPos == step.opOldPos:
+        if step.opNewPos is None or not self._is_adjacent(step.opOldPos, step.opNewPos):
+          raise StateException("Push must move enemy to adjacent square.")
+      elif step.opNewPos == step.oldPos:
+        if not self._is_adjacent(step.oldPos, step.newPos):
+          raise StateException("Pull must move pusher to adjacent square.")
+      else:
+        raise StateException("Invalid push or pull step.")
       enemy = self[step.opOldPos]
       if enemy == None:
         raise StateException("No piece at enemy location.")
@@ -496,16 +750,17 @@ class Board:
 
     self._check_traps()
 
-    self.state.left -= 1
+    self.state.left -= step_cost
 
   def do_move(self, move: Move):
-    if self.state.left < len(move):
+    cost = sum(self.step_cost(step) for step in move)
+    if self.state.left < cost:
       raise StateException("Cannot make a move with more steps than are left.")
     for step in move:
       self.do_step(step)
     self.finish_turn()
 
-  def finish_turn(self):
+  def finish_turn(self, check_win: bool = True):
     """
     Finish the current turn and start the next player's turn
     """
@@ -514,11 +769,32 @@ class Board:
     
     self.state.player = 1 - self.state.player
     self.state.left = 4
+    if check_win:
+      win = self._check_win()
+      if win != None:
+        self.state.end = True
+        self.state.player = win
 
-    win = self._check_win()
-    if win != None:
-      self.state.end = True
-      self.state.player = win
+  def check_win(self):
+    winner, _ = self.check_win_reason()
+    return winner
+
+  def check_win_reason(self):
+    playerA = 1 - self.state.player
+    playerB = self.state.player
+
+    if self._goal_reached(playerA):
+      return playerA, "goal"
+    if self._goal_reached(playerB):
+      return playerB, "goal"
+    if self._no_rabbits(playerB):
+      return playerA, "no_rabbits"
+    if self._no_rabbits(playerA):
+      return playerB, "no_rabbits"
+    if not any(self.possible_steps()):
+      return 1 - self.state.player, "immobilized"
+
+    return None, None
 
   def pieces(self):
     """
@@ -552,47 +828,24 @@ class Board:
     """
     Check if a player has won the game
     """
-    def check_end(player: int):
-      """
-      Check if a player has brought their rabbit to the opposite side of the board
-      """
-      for piece in self._data[0 if player == COLORS.GOLD else -1]:
-        if piece != None:
-          color, rank = parse_piece(piece)
-          if color == player and rank == RANKS.RABBIT:
-            return player
-      return None
-    
-    def check_rabbits(player: int):
-      """
-      Check if a player is out of rabbits
-      """
-      for piece in self.pieces():
+    winner, _ = self.check_win_reason()
+    return winner
+
+  def _goal_reached(self, player: int) -> bool:
+    row = 0 if player == COLORS.GOLD else -1
+    for piece in self._data[row]:
+      if piece != None:
         color, rank = parse_piece(piece)
         if color == player and rank == RANKS.RABBIT:
-          return None
-      return 1 - player
-    
-    playerA = 1 - self.state.player # Player A is the player who just finished their turn
-    playerB = self.state.player # Player B is the player who's turn just started
-    win = check_end(playerA)
-    if win != None:
-      return win
-    win = check_end(playerB)
-    if win != None:
-      return win
-    win = check_rabbits(playerB)
-    if win != None:
-      return win
-    win = check_rabbits(playerA)
-    if win != None:
-      return win
-    
-    # If the current player has no possible moves, their opponent wins
-    if not any(self.possible_steps()):
-      return 1 - self.state.player
-    
-    return None
+          return True
+    return False
+
+  def _no_rabbits(self, player: int) -> bool:
+    for piece in self.pieces():
+      color, rank = parse_piece(piece)
+      if color == player and rank == RANKS.RABBIT:
+        return False
+    return True
   
   def is_frozen(self, pos: Pos) -> bool:
     """
@@ -697,12 +950,11 @@ class Board:
     """
     if self.state.left == 0:
       raise StateException("Current player is out of steps, no possible moves")
-    # Add some extra options on top to bias the randomness towards doing as many steps as possible
     steps = random.randint(1, self.state.left + 3)
     steps = min(steps, self.state.left)
     move = []
     savedState = self.encode()
-    for _ in range(steps):
+    while self.state.left > 0 and len(move) < steps:
       step = self.random_step()
       if step == None:
         break
@@ -735,6 +987,14 @@ class Board:
     """
     Encode the board into a string representation
     """
+    return self.encode_position(
+      player=self.state.player,
+      left=self.state.left,
+      setup=self.state.setup,
+      end=self.state.end
+    )
+
+  def encode_position(self, player: int, left: int, setup: bool, end: bool):
     def stringify():
       for pos in all_positions():
         piece = self[pos]
@@ -743,7 +1003,12 @@ class Board:
         else:
           yield "."
 
-    return self.state.encode() + " " +  "".join(stringify())
+    state = State()
+    state.setup = setup
+    state.end = end
+    state.player = player
+    state.left = left
+    return state.encode() + " " + "".join(stringify())
 
   def decode(self, val: str):
     """
@@ -847,6 +1112,14 @@ class Board:
         second_arg = args[1] if len(args) > 1 else None
         steps.append(self.parse_step(args[0], second_arg))
     return tuple(steps)
+
+  def step_cost(self, step: Step) -> int:
+    return 2 if step.opOldPos != None else 1
+
+  def _is_adjacent(self, pos_a: Pos, pos_b: Pos) -> bool:
+    ax, ay = pos_a
+    bx, by = pos_b
+    return abs(ax - bx) + abs(ay - by) == 1
 
 
 def parse_initial(strs: list[str]):
