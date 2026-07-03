@@ -16,7 +16,9 @@ PY=${PY:-$HOME/venv/bin/python}
 
 cd "$(dirname "$0")/.."
 while true; do
-  "$PY" -m jaxarimaa.train \
+  # Stale libtpu lockfile from a killed process blocks TPU acquisition forever.
+  rm -f /tmp/libtpu_lockfile
+  "$PY" -u -m jaxarimaa.train \
     --ckpt-interval "${CKPT_INTERVAL:-5}" \
     --ckpt-dir "$BUCKET/runs/$RUN/ckpt" \
     --compile-cache "$BUCKET/compile-cache" \
@@ -30,6 +32,6 @@ while true; do
       gsutil -q cp "results/jaxarimaa/$RUN.pkl" "$BUCKET/runs/$RUN/model.pkl" || true
     break
   fi
-  echo "[supervisor] training died (exit $code); relaunching in 10s (auto-resume)"
-  sleep 10
+  echo "[supervisor] training died (exit $code); relaunching in 30s (auto-resume)"
+  sleep 30  # give the TPU driver time to release the dead process's resources
 done
