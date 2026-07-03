@@ -25,6 +25,7 @@ class FeaturesConfig:
     arena_gating: bool = False         # self-play from a gated champion; promote by win-rate
     resign: bool = False               # adjudicate decided self-play games early (more games/rollout)
     playout_cap: bool = False          # KataGo playout-cap: cheap "fast" moves, train only on "full" moves
+    fast_search: bool = False          # batched sequential halving (wave-parallel Gumbel; see fast_search.py)
     # --- architecture (auxiliary heads) ---
     moves_left_head: bool = False      # aux head predicting (normalized) plies to game end
     deep_supervision: bool = False     # intermediate policy/value heads (deep supervision)

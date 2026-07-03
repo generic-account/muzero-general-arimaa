@@ -30,13 +30,18 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
     resign_thresh, full_prob, fast_sims = sp_knobs
     playout_cap = features is not None and features.playout_cap
     resign = features is not None and features.resign
+    if features is not None and features.fast_search:
+        from . import fast_search as search_impl
+    else:
+        search_impl = search
     rng, kinit = jax.random.split(rng)
     states = jax.vmap(jenv.init_state)(jax.random.split(kinit, batch))
 
     def _search(sims):
         def branch(operand):
             s, k = operand
-            out = search.run_search(model, params, k, s, sims, max_considered, features)
+            out = search_impl.run_search(model, params, k, s, sims, max_considered,
+                                         features)
             return out.action, out.action_weights, out.search_tree.node_values[:, 0]
         return branch
 
