@@ -34,6 +34,14 @@ def _open_tensorboard(logdir):
         def scalar(k, v, s):
             w.add_scalar(k, v, s)
         return scalar, w.close
+    except Exception:
+        pass
+    try:  # TF-free and torch-free (what TPU VMs get)
+        from tensorboardX import SummaryWriter
+        w = SummaryWriter(logdir)
+        def scalar(k, v, s):
+            w.add_scalar(k, v, s)
+        return scalar, w.close
     except Exception as exc:  # pragma: no cover - optional dep
         print(f"[metrics] no TensorBoard backend ({exc}); stdout only")
         return None, None

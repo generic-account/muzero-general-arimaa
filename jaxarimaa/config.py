@@ -93,6 +93,8 @@ class TrainConfig:
     arena_interval: int = 10        # iters between candidate-vs-champion matches
     arena_games: int = 32           # games per color (played both colors)
     arena_threshold: float = 0.55   # candidate win-rate needed to promote
+    eval_max_steps: int | None = None  # eval game length (None = selfplay.max_steps);
+                                       # set LONGER so eval games actually finish
     seed: int = 0
 
 

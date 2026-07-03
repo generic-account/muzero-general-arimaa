@@ -143,7 +143,8 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             key, ke = jax.random.split(key)
             w, l, u = evaluate.play_vs_random(
                 model, state.params, ke, our_color=0,
-                n_games=cfg.selfplay.batch_size, max_steps=cfg.selfplay.max_steps,
+                n_games=cfg.selfplay.batch_size,
+                max_steps=tc.eval_max_steps or cfg.selfplay.max_steps,
                 num_sims=cfg.mcts.num_simulations,
                 max_considered=cfg.mcts.max_num_considered_actions, features=feats)
             w, l, u = int(w), int(l), int(u)
@@ -158,7 +159,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         if feats.arena_gating and (it + 1) % tc.arena_interval == 0:
             key, ka1, ka2 = jax.random.split(key, 3)
             ns, nc = cfg.mcts.num_simulations, cfg.mcts.max_num_considered_actions
-            ms, g = cfg.selfplay.max_steps, tc.arena_games
+            ms, g = (tc.eval_max_steps or cfg.selfplay.max_steps), tc.arena_games
             a1, b1, _ = evaluate.play_match(model, state.params, champion, ka1, 0,
                                             g, ms, ns, nc, feats)  # candidate = gold
             a2, b2, _ = evaluate.play_match(model, champion, state.params, ka2, 0,
@@ -178,6 +179,12 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
 
         if ckpt_mgr:
             ckpt_mgr.save(it, state)  # periodic; Orbax gates by save-interval
+            if (it + 1) % tc.ckpt_interval == 0:
+                # Also refresh the small portable weights pickle so current
+                # strength can be evaluated (e.g. on the AEI ladder) mid-run.
+                os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+                checkpoint.save(out_path, state.params,
+                                {"config": cfg.to_dict(), "steps": it + 1})
 
     if ckpt_mgr:
         ckpt_mgr.close()
