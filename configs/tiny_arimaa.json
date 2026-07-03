@@ -1,0 +1,12 @@
+{
+  "blocks": 2,
+  "channels": 16,
+  "reduced_channels_reward": 16,
+  "reduced_channels_value": 16,
+  "reduced_channels_policy": 16,
+  "resnet_fc_reward_layers": [16],
+  "resnet_fc_value_layers": [16],
+  "resnet_fc_policy_layers": [16],
+  "support_size": 10,
+  "num_simulations": 15
+}

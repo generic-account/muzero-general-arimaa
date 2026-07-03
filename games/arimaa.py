@@ -1081,13 +1081,13 @@ class Board:
       dx = x - xn
       dy = y - yn
       if dx == 1:
-        dir = "e"
-      elif dx == -1:
         dir = "w"
+      elif dx == -1:
+        dir = "e"
       elif dy == 1:
-        dir = "s"
-      elif dy == -1:
         dir = "n"
+      elif dy == -1:
+        dir = "s"
       else:
         raise ValueError("Invalid move direction")
       return char + pos + dir

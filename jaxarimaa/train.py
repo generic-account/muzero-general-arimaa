@@ -1,0 +1,219 @@
+"""End-to-end AlphaZero training loop for jaxarimaa.
+
+Per iteration: run vectorized self-play (data-parallel across the device mesh),
+add samples to the replay buffer, take several sharded gradient steps, and
+periodically checkpoint + evaluate vs a random opponent.
+
+Run a CPU smoke test:
+    python -m jaxarimaa.train --tiny
+"""
+
+import argparse
+import time
+
+import os
+
+import jax
+import jax.numpy as jnp
+
+from . import checkpoint, checkpointing, distributed, evaluate, metrics, selfplay, trainer
+from .config import Config, tiny_config, tiny_transformer_config
+
+
+def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
+          verbose=True, logdir=None, use_wandb=False):
+    tc = cfg.train
+    distributed.enable_compilation_cache(tc.compile_cache_dir)  # before any jit
+    distributed.init_distributed(tc.multihost)   # no-op single-host
+    mesh = distributed.make_mesh()
+    if verbose:
+        print(f"devices: {len(jax.devices())} | hosts: {jax.process_count()} | "
+              f"mesh: {mesh.shape['data']} | backbone={cfg.net.backbone} "
+              f"ch={cfg.net.channels} blocks={cfg.net.blocks}")
+
+    logger = metrics.Logger(logdir=logdir, use_wandb=use_wandb, config=cfg.to_dict())
+    key = jax.random.PRNGKey(tc.seed)
+    key, kinit = jax.random.split(key)
+    state = trainer.create_train_state(cfg, kinit)
+    state = distributed.replicate_tree(mesh, state)
+
+    # Preemption-safe checkpointing: restore full state (params+opt+step) if present.
+    ckpt_mgr, start_it = None, 0
+    if tc.ckpt_interval:
+        ckpt_dir = tc.ckpt_dir or os.path.join(os.path.dirname(out_path) or ".",
+                                               "checkpoints")
+        ckpt_mgr = checkpointing.CheckpointManager(ckpt_dir, tc.ckpt_interval,
+                                                   tc.ckpt_max_keep)
+        state, start_it = ckpt_mgr.maybe_restore(state)
+        if start_it and verbose:
+            print(f"resumed from checkpoint at iteration {start_it}")
+        key = jax.random.fold_in(key, start_it)  # don't replay self-play after resume
+
+    from .replay import DeviceReplay
+    buf = DeviceReplay(mesh, tc.replay_capacity)
+    model = trainer.make_model(cfg)
+    feats = cfg.features
+    active = [k for k, v in vars(feats).items() if v]
+    if verbose:
+        print(f"features: {active or 'baseline (none)'}")
+    mcts = (cfg.mcts.num_simulations, cfg.mcts.max_num_considered_actions)
+    sp_knobs = (cfg.selfplay.resign_threshold, cfg.selfplay.full_search_prob,
+                cfg.selfplay.fast_sims)
+    generate = selfplay.make_generate(mesh, model, cfg.selfplay.batch_size,
+                                      cfg.selfplay.max_steps, mcts, feats, sp_knobs)
+    # Arena gating: self-play from a gated champion; promote the learner when it beats
+    # the champion. When off, self-play uses the latest params (current behavior).
+    champion = state.params if feats.arena_gating else None
+
+    # Global per-iteration work (all devices/hosts): games and env-steps generated.
+    games_per_iter = cfg.selfplay.batch_size
+    env_steps_per_iter = games_per_iter * cfg.selfplay.max_steps
+    samples_per_train = tc.train_batch_size * tc.train_steps_per_iter
+    games_total = 0
+
+    for it in range(start_it, tc.iterations):
+        # --- self-play (each device plays distinct games; output sharded) ---
+        t0 = time.time()
+        key, ksp = jax.random.split(key)
+        sp_params = champion if feats.arena_gating else state.params
+        recs = generate(sp_params, ksp)
+        jax.block_until_ready(recs)                # settle async dispatch before timing
+        sp_t = time.time() - t0
+        flat = selfplay.flatten_samples(recs)
+        buf.add(flat)
+        # value-target magnitude: rises toward 1 as games actually finish (health signal)
+        vt_absmean = float(jnp.mean(jnp.abs(flat["value_target"])))
+
+        # --- training steps (sample straight from the on-device sharded buffer) ---
+        t1 = time.time()
+        last = {}
+        if buf.size >= tc.min_replay_size:
+            for _ in range(tc.train_steps_per_iter):
+                if feats.symmetry_aug:
+                    key, ksmp, kaug = jax.random.split(key, 3)
+                else:
+                    key, ksmp = jax.random.split(key, 2)  # no extra draw when disabled
+                    kaug = ksmp  # unused by train_step when symmetry is off
+                batch = buf.sample(ksmp, tc.train_batch_size)
+                state, last = trainer.train_step(
+                    state, batch, tc.value_loss_weight, kaug, feats.symmetry_aug,
+                    (tc.moves_left_weight, tc.deep_supervision_weight, tc.mtp_weight))
+            jax.block_until_ready(state.params)
+        tr_t = time.time() - t1
+        games_total += games_per_iter
+
+        m = {
+            "throughput/games_per_s": games_per_iter / max(sp_t, 1e-9),
+            "throughput/env_steps_per_s": env_steps_per_iter / max(sp_t, 1e-9),
+            "throughput/train_samples_per_s": (samples_per_train / max(tr_t, 1e-9)) if last else 0.0,
+            "throughput/selfplay_s": sp_t,
+            "throughput/train_s": tr_t,
+            "counters/games_total": games_total,
+            "counters/buffer_size": buf.total_size,
+            "selfplay/value_target_absmean": vt_absmean,
+        }
+        if last:
+            m["loss/total"] = float(last["loss"])
+            m["loss/policy"] = float(last["policy_loss"])
+            m["loss/value"] = float(last["value_loss"])
+        logger.write(it, m)
+
+        if verbose:
+            loss = float(last["loss"]) if last else float("nan")
+            print(f"[iter {it:03d}] games={games_total:>7d} buf={buf.total_size:>7d} "
+                  f"loss={loss:.3f} | {m['throughput/games_per_s']:.1f} games/s "
+                  f"{m['throughput/env_steps_per_s']:.0f} env-steps/s | "
+                  f"sp {sp_t:.1f}s tr {tr_t:.1f}s")
+
+        if eval_every and (it + 1) % eval_every == 0:
+            key, ke = jax.random.split(key)
+            w, l, u = evaluate.play_vs_random(
+                model, state.params, ke, our_color=0,
+                n_games=cfg.selfplay.batch_size, max_steps=cfg.selfplay.max_steps,
+                num_sims=cfg.mcts.num_simulations,
+                max_considered=cfg.mcts.max_num_considered_actions, features=feats)
+            w, l, u = int(w), int(l), int(u)
+            decided = w + l
+            logger.write(it, {
+                "eval/wins": w, "eval/losses": l, "eval/unfinished": u,
+                "eval/win_rate": (w / decided) if decided else 0.0,
+            })
+            if verbose:
+                print(f"          eval vs random (gold): W{w} L{l} unfinished{u}")
+
+        if feats.arena_gating and (it + 1) % tc.arena_interval == 0:
+            key, ka1, ka2 = jax.random.split(key, 3)
+            ns, nc = cfg.mcts.num_simulations, cfg.mcts.max_num_considered_actions
+            ms, g = cfg.selfplay.max_steps, tc.arena_games
+            a1, b1, _ = evaluate.play_match(model, state.params, champion, ka1, 0,
+                                            g, ms, ns, nc, feats)  # candidate = gold
+            a2, b2, _ = evaluate.play_match(model, champion, state.params, ka2, 0,
+                                            g, ms, ns, nc, feats)  # candidate = silver
+            cand_wins = int(a1) + int(b2)
+            decided = cand_wins + int(b1) + int(a2)
+            wr = cand_wins / decided if decided else 0.0
+            promoted = wr > tc.arena_threshold
+            if promoted:
+                champion = state.params
+            logger.write(it, {"arena/cand_win_rate": wr,
+                              "arena/promoted": float(promoted),
+                              "arena/decided": decided})
+            if verbose:
+                print(f"          arena: candidate win-rate {wr:.2f} over {decided} "
+                      f"decided -> {'PROMOTED' if promoted else 'kept champion'}")
+
+        if ckpt_mgr:
+            ckpt_mgr.save(it, state)  # periodic; Orbax gates by save-interval
+
+    if ckpt_mgr:
+        ckpt_mgr.close()
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    checkpoint.save(out_path, state.params,
+                    {"config": cfg.to_dict(), "steps": tc.iterations})
+    logger.close()
+    if verbose:
+        print(f"saved checkpoint -> {out_path}")
+    return state
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--tiny", action="store_true", help="CPU smoke-test config")
+    ap.add_argument("--transformer", action="store_true",
+                    help="use the transformer backbone (with --tiny)")
+    ap.add_argument("--out", default="results/jaxarimaa/model.pkl")
+    ap.add_argument("--logdir", default=None,
+                    help="TensorBoard logdir (local path or gs://bucket/run)")
+    ap.add_argument("--wandb", action="store_true", help="stream metrics to W&B")
+    ap.add_argument("--multihost", action="store_true",
+                    help="call jax.distributed.initialize() (multi-host slices)")
+    ap.add_argument("--ckpt-interval", type=int, default=0,
+                    help="iters between preemption-safe Orbax checkpoints (0=off)")
+    ap.add_argument("--ckpt-dir", default=None,
+                    help="durable checkpoint dir (gs://... for spot); default local")
+    ap.add_argument("--compile-cache", default=None,
+                    help="persistent XLA compilation cache dir (gs://... or local)")
+    args = ap.parse_args()
+    if args.transformer:
+        cfg = tiny_transformer_config()
+    elif args.tiny:
+        cfg = tiny_config()
+    else:
+        cfg = Config()
+    import dataclasses
+    overrides = {}
+    if args.multihost:
+        overrides["multihost"] = True
+    if args.ckpt_interval:
+        overrides["ckpt_interval"] = args.ckpt_interval
+    if args.ckpt_dir:
+        overrides["ckpt_dir"] = args.ckpt_dir
+    if args.compile_cache:
+        overrides["compile_cache_dir"] = args.compile_cache
+    if overrides:
+        cfg = dataclasses.replace(cfg, train=dataclasses.replace(cfg.train, **overrides))
+    train(cfg, out_path=args.out, logdir=args.logdir, use_wandb=args.wandb)
+
+
+if __name__ == "__main__":
+    main()

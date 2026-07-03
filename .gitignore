@@ -93,3 +93,6 @@ venv.bak/
 dmypy.json
 
 results/
+
+# External opponent bots / harnesses (cloned locally, not ours)
+third_party/
