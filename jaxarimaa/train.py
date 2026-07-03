@@ -16,12 +16,13 @@ import os
 import jax
 import jax.numpy as jnp
 
-from . import checkpoint, checkpointing, distributed, evaluate, metrics, selfplay, trainer
+from . import (checkpoint, checkpointing, distributed, env as jenv, evaluate,
+               metrics, perf, selfplay, trainer)
 from .config import Config, tiny_config, tiny_transformer_config
 
 
 def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
-          verbose=True, logdir=None, use_wandb=False):
+          verbose=True, logdir=None, use_wandb=False, profile_dir=None):
     tc = cfg.train
     distributed.enable_compilation_cache(tc.compile_cache_dir)  # before any jit
     distributed.init_distributed(tc.multihost)   # no-op single-host
@@ -71,7 +72,16 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     samples_per_train = tc.train_batch_size * tc.train_steps_per_iter
     games_total = 0
 
+    # Hardware-utilization instruments: measured-FLOPs MFU + optional XLA trace.
+    obs_shape = jenv.observe(jenv.init_state(jax.random.PRNGKey(0)), feats).shape
+    meter = perf.MFUMeter(model, state.params, obs_shape, cfg)
+    profiler = perf.IterationProfiler(profile_dir)
+    if verbose and meter.peak:
+        print(f"perf: fwd={meter.fwd_flops_selfplay_batch/1e9:.2f} GFLOP/batch-fwd | "
+              f"peak {meter.peak * meter.n_dev / 1e12:.0f} TFLOP/s over {meter.n_dev} dev")
+
     for it in range(start_it, tc.iterations):
+        profiler.maybe_start(it)
         # --- self-play (each device plays distinct games; output sharded) ---
         t0 = time.time()
         key, ksp = jax.random.split(key)
@@ -102,6 +112,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         tr_t = time.time() - t1
         games_total += games_per_iter
 
+        profiler.maybe_stop(it)
         m = {
             "throughput/games_per_s": games_per_iter / max(sp_t, 1e-9),
             "throughput/env_steps_per_s": env_steps_per_iter / max(sp_t, 1e-9),
@@ -112,6 +123,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             "counters/buffer_size": buf.total_size,
             "selfplay/value_target_absmean": vt_absmean,
         }
+        m.update(meter.metrics(sp_t, tr_t, trained=bool(last)))
         if last:
             m["loss/total"] = float(last["loss"])
             m["loss/policy"] = float(last["policy_loss"])
@@ -120,9 +132,11 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
 
         if verbose:
             loss = float(last["loss"]) if last else float("nan")
+            mfu = f" mfu={m['perf/mfu']*100:.1f}%" if "perf/mfu" in m else ""
             print(f"[iter {it:03d}] games={games_total:>7d} buf={buf.total_size:>7d} "
                   f"loss={loss:.3f} | {m['throughput/games_per_s']:.1f} games/s "
-                  f"{m['throughput/env_steps_per_s']:.0f} env-steps/s | "
+                  f"{m['throughput/env_steps_per_s']:.0f} env-steps/s "
+                  f"{m['perf/achieved_tflops']:.2f} TFLOP/s{mfu} | "
                   f"sp {sp_t:.1f}s tr {tr_t:.1f}s")
 
         if eval_every and (it + 1) % eval_every == 0:
@@ -193,6 +207,8 @@ def main():
                     help="durable checkpoint dir (gs://... for spot); default local")
     ap.add_argument("--compile-cache", default=None,
                     help="persistent XLA compilation cache dir (gs://... or local)")
+    ap.add_argument("--profile-dir", default=None,
+                    help="capture an XLA trace of one iteration to this dir")
     args = ap.parse_args()
     if args.transformer:
         cfg = tiny_transformer_config()
@@ -212,7 +228,8 @@ def main():
         overrides["compile_cache_dir"] = args.compile_cache
     if overrides:
         cfg = dataclasses.replace(cfg, train=dataclasses.replace(cfg.train, **overrides))
-    train(cfg, out_path=args.out, logdir=args.logdir, use_wandb=args.wandb)
+    train(cfg, out_path=args.out, logdir=args.logdir, use_wandb=args.wandb,
+          profile_dir=args.profile_dir)
 
 
 if __name__ == "__main__":
