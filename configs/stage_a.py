@@ -16,6 +16,8 @@ results/<run>/tb — rsync to GCS and view locally. Learning signals to watch:
 
 import sys
 
+import jax
+
 from jaxarimaa import train
 from jaxarimaa.config import (Config, FeaturesConfig, MCTSConfig, NetConfig,
                               SelfPlayConfig, TrainConfig)
@@ -24,11 +26,16 @@ RUN = sys.argv[1] if len(sys.argv) > 1 else "stage_a"
 ITERS = int(sys.argv[2]) if len(sys.argv) > 2 else 400
 BUCKET = "gs://arimaa-tpu-2026-artifacts"
 
+# Scale the game batch with the slice: 1024 games PER CHIP keeps per-shard shapes
+# (and HBM footprint) identical to the validated single-chip run.
+PER_CHIP_GAMES = 1024
+N_CHIPS = len(jax.devices())
+
 cfg = Config(
     net=NetConfig(channels=256, blocks=15),
     mcts=MCTSConfig(num_simulations=32, max_num_considered_actions=16),
     selfplay=SelfPlayConfig(
-        batch_size=1024, max_steps=192,
+        batch_size=PER_CHIP_GAMES * N_CHIPS, max_steps=192,
         resign_threshold=0.95,          # conservative early; value head must earn it
         full_search_prob=0.25, fast_sims=8,
     ),
