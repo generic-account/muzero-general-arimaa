@@ -1,10 +1,13 @@
 """Static board/action constants for the vectorized JAX Arimaa engine.
 
-The action ordering is derived DIRECTLY from the legacy engine's canonical action
-list (``games.arimaa.ACTION_LIST`` + the trailing END_TURN action). This guarantees
-that a JAX action index and a legacy action index refer to the *same* move, which is
-what makes differential testing against the oracle sound. (Later we can freeze these
-tables to a .npz and drop the import-time dependency on the legacy engine.)
+The action ordering matches the legacy engine's canonical action list
+(``games.arimaa.ACTION_LIST`` + the trailing END_TURN action), so a JAX action
+index and a legacy action index refer to the *same* move — the invariant that
+makes differential testing against the oracle sound. The tables ship FROZEN in
+``action_tables.npz`` (so deploy targets, e.g. TPU VMs, need neither the legacy
+engine nor torch); when the file is absent they are re-derived from the legacy
+engine. Regenerate after any action-space change with:
+    python -m jaxarimaa.constants   # writes jaxarimaa/action_tables.npz
 
 Board / cell encoding used throughout jaxarimaa (distinct from the legacy engine's
 internal piece codes):
@@ -15,9 +18,9 @@ Board arrays are stored row-major as ``board[y, x]`` with ``y=0`` the top rank (
 and ``x=0`` file 'a', matching the legacy engine's ``Board[(x, y)] == _data[y][x]``.
 """
 
-import numpy as np
+import pathlib
 
-from games import arimaa as _legacy
+import numpy as np
 
 # ---------------------------------------------------------------------------
 # Board geometry / piece encoding
@@ -49,59 +52,53 @@ def decode_cell_code(code):
 
 
 # ---------------------------------------------------------------------------
-# Action tables (derived from the legacy canonical ordering)
+# Action tables: frozen .npz (deploy) or derived from the legacy engine (dev)
 # ---------------------------------------------------------------------------
-_legacy.init_actions()
-_ACTION_LIST = _legacy.ACTION_LIST
-N_STEP_ACTIONS = len(_ACTION_LIST)          # 1392
-END_TURN = N_STEP_ACTIONS                    # index 1392
-N_ACTIONS = N_STEP_ACTIONS + 1               # 1393
-
 _NEG = -1  # sentinel for "no coordinate / no push-pull / end-turn"
+_NPZ_PATH = pathlib.Path(__file__).with_name("action_tables.npz")
 
 
-def _build_action_tables():
-    """Return numpy int16 tables of shape [N_ACTIONS] describing every action.
+def _derive_action_tables():
+    """Build the tables from the legacy engine's canonical ACTION_LIST.
 
     For a plain step: (from)->(to) with op_* = -1.
     For a push/pull:  our piece (from)->(to) AND opponent (op_from)->(op_to).
-    For END_TURN: all fields = -1, is_end = True.
+    For END_TURN (last row): all fields = -1, is_end = True.
     """
-    frm_x = np.full(N_ACTIONS, _NEG, np.int16)
-    frm_y = np.full(N_ACTIONS, _NEG, np.int16)
-    to_x = np.full(N_ACTIONS, _NEG, np.int16)
-    to_y = np.full(N_ACTIONS, _NEG, np.int16)
-    op_frm_x = np.full(N_ACTIONS, _NEG, np.int16)
-    op_frm_y = np.full(N_ACTIONS, _NEG, np.int16)
-    op_to_x = np.full(N_ACTIONS, _NEG, np.int16)
-    op_to_y = np.full(N_ACTIONS, _NEG, np.int16)
-    is_pushpull = np.zeros(N_ACTIONS, np.bool_)
-    is_end = np.zeros(N_ACTIONS, np.bool_)
-    cost = np.ones(N_ACTIONS, np.int16)
+    from games import arimaa as _legacy  # requires the dev environment (torch)
 
-    for i, spec in enumerate(_ACTION_LIST):
-        (fx, fy) = spec.old_pos
-        (tx, ty) = spec.new_pos
-        frm_x[i], frm_y[i], to_x[i], to_y[i] = fx, fy, tx, ty
+    _legacy.init_actions()
+    action_list = _legacy.ACTION_LIST
+    n = len(action_list) + 1  # + END_TURN
+    t = {k: np.full(n, _NEG, np.int16)
+         for k in ("frm_x", "frm_y", "to_x", "to_y",
+                   "op_frm_x", "op_frm_y", "op_to_x", "op_to_y")}
+    t["is_pushpull"] = np.zeros(n, np.bool_)
+    t["is_end"] = np.zeros(n, np.bool_)
+    t["cost"] = np.ones(n, np.int16)
+
+    for i, spec in enumerate(action_list):
+        t["frm_x"][i], t["frm_y"][i] = spec.old_pos
+        t["to_x"][i], t["to_y"][i] = spec.new_pos
         if spec.op_old_pos is not None:
-            (ofx, ofy) = spec.op_old_pos
-            (otx, oty) = spec.op_new_pos
-            op_frm_x[i], op_frm_y[i] = ofx, ofy
-            op_to_x[i], op_to_y[i] = otx, oty
-            is_pushpull[i] = True
-            cost[i] = 2
-    is_end[END_TURN] = True
-    cost[END_TURN] = 0
-
-    return {
-        "frm_x": frm_x, "frm_y": frm_y, "to_x": to_x, "to_y": to_y,
-        "op_frm_x": op_frm_x, "op_frm_y": op_frm_y,
-        "op_to_x": op_to_x, "op_to_y": op_to_y,
-        "is_pushpull": is_pushpull, "is_end": is_end, "cost": cost,
-    }
+            t["op_frm_x"][i], t["op_frm_y"][i] = spec.op_old_pos
+            t["op_to_x"][i], t["op_to_y"][i] = spec.op_new_pos
+            t["is_pushpull"][i] = True
+            t["cost"][i] = 2
+    t["is_end"][n - 1] = True
+    t["cost"][n - 1] = 0
+    return t
 
 
-ACTION_TABLES = _build_action_tables()
+if _NPZ_PATH.exists():
+    with np.load(_NPZ_PATH) as _d:
+        ACTION_TABLES = {k: _d[k] for k in _d.files}
+else:
+    ACTION_TABLES = _derive_action_tables()
+
+N_ACTIONS = len(ACTION_TABLES["frm_x"])      # 1393
+END_TURN = N_ACTIONS - 1                      # index 1392
+N_STEP_ACTIONS = END_TURN                     # 1392
 
 
 # Static trap-square plane [8,8] (1.0 at c3/f3/c6/f6), for the optional trap input plane.
@@ -138,3 +135,13 @@ def _build_sym_perm():
 
 
 SYM_PERM = _build_sym_perm()  # numpy int32 [N_ACTIONS]
+
+
+if __name__ == "__main__":
+    # Freeze the legacy-derived tables to action_tables.npz (run in the dev env).
+    tables = _derive_action_tables()
+    np.savez_compressed(_NPZ_PATH, **tables)
+    with np.load(_NPZ_PATH) as check:
+        assert all(np.array_equal(check[k], tables[k]) for k in tables)
+    print(f"wrote {_NPZ_PATH} ({_NPZ_PATH.stat().st_size} bytes, "
+          f"{len(tables['frm_x'])} actions)")
