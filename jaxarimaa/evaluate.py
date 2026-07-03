@@ -22,9 +22,16 @@ def _random_legal_action(rng, states):
     return jnp.argmax(scored, axis=-1)
 
 
-@functools.partial(jax.jit, static_argnums=(0, 4, 5, 6, 7, 8))
+def _run_search_impl(fast):
+    if fast:
+        from . import fast_search
+        return fast_search.run_search
+    return search.run_search
+
+
+@functools.partial(jax.jit, static_argnums=(0, 4, 5, 6, 7, 8, 9))
 def play_vs_random(model, params, rng, our_color, n_games, max_steps,
-                   num_sims, max_considered, features=None):
+                   num_sims, max_considered, features=None, fast=False):
     rng, kinit = jax.random.split(rng)
     states = jax.vmap(jenv.init_state)(jax.random.split(kinit, n_games))
     done = jnp.zeros((n_games,), bool)
@@ -33,8 +40,8 @@ def play_vs_random(model, params, rng, our_color, n_games, max_steps,
     def body(carry, _):
         states, done, result, rng = carry
         rng, ks, kr = jax.random.split(rng, 3)
-        out = search.run_search(model, params, ks, states, num_sims, max_considered,
-                                features)
+        out = _run_search_impl(fast)(model, params, ks, states, num_sims,
+                                     max_considered, features)
         rnd = _random_legal_action(kr, states)
         use_ours = states.player == our_color
         action = jnp.where(use_ours, out.action, rnd)
@@ -57,9 +64,9 @@ def play_vs_random(model, params, rng, our_color, n_games, max_steps,
     return wins, losses, unfinished
 
 
-@functools.partial(jax.jit, static_argnums=(0, 4, 5, 6, 7, 8, 9))
+@functools.partial(jax.jit, static_argnums=(0, 4, 5, 6, 7, 8, 9, 10))
 def play_match(model, params_a, params_b, rng, a_color, n_games, max_steps,
-               num_sims, max_considered, features=None):
+               num_sims, max_considered, features=None, fast=False):
     """Play `params_a` (as `a_color`) vs `params_b` via search, batched over games.
     Returns (a_wins, b_wins, unfinished). Used for arena gating (candidate vs champion).
     """
@@ -71,10 +78,9 @@ def play_match(model, params_a, params_b, rng, a_color, n_games, max_steps,
     def body(carry, _):
         states, done, result, rng = carry
         rng, ka, kb = jax.random.split(rng, 3)
-        out_a = search.run_search(model, params_a, ka, states, num_sims,
-                                  max_considered, features)
-        out_b = search.run_search(model, params_b, kb, states, num_sims,
-                                  max_considered, features)
+        impl = _run_search_impl(fast)
+        out_a = impl(model, params_a, ka, states, num_sims, max_considered, features)
+        out_b = impl(model, params_b, kb, states, num_sims, max_considered, features)
         action = jnp.where(states.player == a_color, out_a.action, out_b.action)
         nstates = jax.vmap(jenv.step)(states, action)
         nstates = jenv.where_state(done, states, nstates)  # freeze finished lanes

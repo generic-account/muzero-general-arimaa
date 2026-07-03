@@ -143,10 +143,11 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             key, ke = jax.random.split(key)
             w, l, u = evaluate.play_vs_random(
                 model, state.params, ke, our_color=0,
-                n_games=cfg.selfplay.batch_size,
+                n_games=min(cfg.selfplay.batch_size, 512),
                 max_steps=tc.eval_max_steps or cfg.selfplay.max_steps,
                 num_sims=cfg.mcts.num_simulations,
-                max_considered=cfg.mcts.max_num_considered_actions, features=feats)
+                max_considered=cfg.mcts.max_num_considered_actions, features=feats,
+                fast=feats.fast_search)
             w, l, u = int(w), int(l), int(u)
             decided = w + l
             logger.write(it, {
@@ -161,9 +162,11 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             ns, nc = cfg.mcts.num_simulations, cfg.mcts.max_num_considered_actions
             ms, g = (tc.eval_max_steps or cfg.selfplay.max_steps), tc.arena_games
             a1, b1, _ = evaluate.play_match(model, state.params, champion, ka1, 0,
-                                            g, ms, ns, nc, feats)  # candidate = gold
+                                            g, ms, ns, nc, feats,
+                                            feats.fast_search)  # candidate = gold
             a2, b2, _ = evaluate.play_match(model, champion, state.params, ka2, 0,
-                                            g, ms, ns, nc, feats)  # candidate = silver
+                                            g, ms, ns, nc, feats,
+                                            feats.fast_search)  # candidate = silver
             cand_wins = int(a1) + int(b2)
             decided = cand_wins + int(b1) + int(a2)
             wr = cand_wins / decided if decided else 0.0
