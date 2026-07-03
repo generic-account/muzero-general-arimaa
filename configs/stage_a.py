@@ -43,7 +43,10 @@ cfg = Config(
         train_batch_size=1024, iterations=ITERS, train_steps_per_iter=8,
         replay_capacity=131072, warmup_steps=100, lr=2e-3,
         ckpt_interval=5, ckpt_max_keep=3,
-        ckpt_dir=f"{BUCKET}/runs/{RUN}/ckpt",
+        # Local Orbax dir: async sharded saves straight to gs:// time out on
+        # multi-device meshes (orbax/gcsfs signaling); the stage runner rsyncs
+        # this dir to GCS for durability and pulls it down on fresh VMs.
+        ckpt_dir=f"results/jaxarimaa/{RUN}_ckpt",
         compile_cache_dir=f"{BUCKET}/compile-cache",
         arena_interval=10, arena_games=64, arena_threshold=0.55,
         eval_max_steps=384,             # long enough for eval games to finish

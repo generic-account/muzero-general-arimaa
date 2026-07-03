@@ -22,7 +22,16 @@ cd "$(dirname "$0")/.."
 sync_artifacts() {
   gsutil -m -q rsync -r "results/jaxarimaa/${RUN}_tb" "$BUCKET/runs/$RUN/tb" 2>/dev/null || true
   gsutil -q cp "results/jaxarimaa/$RUN.pkl" "$BUCKET/runs/$RUN/model.pkl" 2>/dev/null || true
+  # Orbax checkpoints are written locally (multi-device async saves to gs://
+  # time out); mirror them to GCS for preemption durability.
+  gsutil -m -q rsync -r -d "results/jaxarimaa/${RUN}_ckpt" "$BUCKET/runs/$RUN/ckpt" 2>/dev/null || true
 }
+
+# Fresh VM after a preemption: restore the latest mirrored checkpoints first.
+if [ ! -d "results/jaxarimaa/${RUN}_ckpt" ]; then
+  mkdir -p "results/jaxarimaa/${RUN}_ckpt"
+  gsutil -m -q rsync -r "$BUCKET/runs/$RUN/ckpt" "results/jaxarimaa/${RUN}_ckpt" 2>/dev/null || true
+fi
 
 ( while true; do sleep 300; sync_artifacts; done ) &
 SYNC_PID=$!
