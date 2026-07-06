@@ -40,8 +40,8 @@ cfg = Config(
         full_search_prob=0.25, fast_sims=8,
     ),
     train=TrainConfig(
-        train_batch_size=1024, iterations=ITERS, train_steps_per_iter=8,
-        replay_capacity=131072, warmup_steps=100, lr=2e-3,
+        train_batch_size=1024, iterations=ITERS, train_steps_per_iter=64,
+        replay_capacity=262144, warmup_steps=100, lr=2e-3,
         ckpt_interval=5, ckpt_max_keep=3,
         # Local Orbax dir: async sharded saves straight to gs:// time out on
         # multi-device meshes (orbax/gcsfs signaling); the stage runner rsyncs
