@@ -155,3 +155,4 @@ ZOBRIST_CELLS = _ZRNG.randint(1, 2**32, size=(13, N_CELLS), dtype=np.uint32)
 ZOBRIST_CELLS[0, :] = 0  # empty cells contribute nothing
 ZOBRIST_PLAYER = _ZRNG.randint(1, 2**32, size=(2,), dtype=np.uint32)
 REP_HISTORY = 64  # turn-end positions remembered per game (ring buffer)
+MOVES_LEFT_CAP = 64.0  # plies-to-end cap for the moves-left head target normalization

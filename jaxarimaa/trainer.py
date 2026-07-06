@@ -80,8 +80,9 @@ def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0)):
     # targets may be stored bf16 in the replay buffer; accumulate the CE in f32
     policy_loss = -jnp.sum(batch["policy_target"].astype(jnp.float32) * logp, axis=-1)
     value_loss = (value - batch["value_target"]) ** 2
-    # Per-sample weights (playout-cap: fast moves have weight 0). Default weight 1 =>
-    # weighted mean is the plain mean, so baseline behavior is unchanged.
+    # Optional per-sample weights. No current producer emits "weight" (self-play
+    # filters fast-move rows out rather than down-weighting), so this defaults to
+    # ones => plain mean; kept as a hook (e.g. KataGo-style per-term weighting).
     w = batch.get("weight", jnp.ones_like(value_loss))
     wsum = jnp.sum(w) + 1e-8
     pol = _weighted_mean(policy_loss, w, wsum)

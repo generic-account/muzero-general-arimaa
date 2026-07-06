@@ -9,9 +9,9 @@ Run a CPU smoke test:
 """
 
 import argparse
-import time
-
+import math
 import os
+import time
 
 import jax
 import jax.numpy as jnp
@@ -58,9 +58,12 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     if verbose:
         print(f"features: {active or 'baseline (none)'}")
     mcts = (cfg.mcts.num_simulations, cfg.mcts.max_num_considered_actions)
-    sp_knobs = (cfg.selfplay.resign_threshold, cfg.selfplay.full_search_prob,
-                cfg.selfplay.fast_sims, cfg.selfplay.value_target_outcome_weight,
-                cfg.selfplay.greedy_after_turns)
+    sp_knobs = selfplay.SPKnobs(
+        resign_thresh=cfg.selfplay.resign_threshold,
+        full_prob=cfg.selfplay.full_search_prob,
+        fast_sims=cfg.selfplay.fast_sims,
+        outcome_w=cfg.selfplay.value_target_outcome_weight,
+        greedy_after=cfg.selfplay.greedy_after_turns)
     generate = selfplay.make_generate(mesh, model, cfg.selfplay.batch_size,
                                       cfg.selfplay.max_steps, mcts, feats, sp_knobs)
     # Arena as an ELO METRIC (not a data gate): self-play ALWAYS uses the learner —
@@ -163,7 +166,6 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                 print(f"          eval vs random (gold): W{w} L{l} unfinished{u}")
 
         if feats.arena_gating and (it + 1) % tc.arena_interval == 0:
-            import math
             key, ka1, ka2 = jax.random.split(key, 3)
             ns, nc = cfg.mcts.num_simulations, cfg.mcts.max_num_considered_actions
             ms, g = (tc.eval_max_steps or cfg.selfplay.max_steps), tc.arena_games

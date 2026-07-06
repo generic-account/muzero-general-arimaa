@@ -22,7 +22,7 @@ class FeaturesConfig:
     # --- training / compute ---
     symmetry_aug: bool = False         # left-right (x->7-x) data augmentation
     bf16: bool = False                 # bfloat16 compute (params kept fp32)
-    arena_gating: bool = False         # self-play from a gated champion; promote by win-rate
+    arena_gating: bool = False         # run learner-vs-frozen-anchor matches -> chained Elo metric (train.py); NOT a data gate
     resign: bool = False               # adjudicate decided self-play games early (more games/rollout)
     playout_cap: bool = False          # KataGo playout-cap: cheap "fast" moves, train only on "full" moves
     adjudicate_truncation: bool = False  # truncated games: material/advancement adjudication (env.material_eval) instead of net bootstrap
@@ -95,10 +95,12 @@ class TrainConfig:
     ckpt_max_keep: int = 3          # rotate: keep this many checkpoints
     ckpt_dir: str | None = None     # durable checkpoint dir (gs://... for spot); None = local
     compile_cache_dir: str | None = None  # persist XLA compiles (gs:///local) for fast restart
-    # arena gating (used when features.arena_gating is on)
-    arena_interval: int = 10        # iters between candidate-vs-champion matches
+    # arena Elo metric (used when features.arena_gating is on): learner vs a frozen
+    # anchor; unfinished games count as draws; anchor re-frozen when the learner clears
+    # arena_threshold, chaining the elo/estimate curve.
+    arena_interval: int = 10        # iters between learner-vs-anchor match rounds
     arena_games: int = 32           # games per color (played both colors)
-    arena_threshold: float = 0.55   # candidate win-rate needed to promote
+    arena_threshold: float = 0.55   # score at which the anchor re-freezes to the learner
     eval_max_steps: int | None = None  # eval game length (None = selfplay.max_steps);
                                        # set LONGER so eval games actually finish
     seed: int = 0

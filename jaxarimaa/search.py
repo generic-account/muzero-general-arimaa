@@ -57,9 +57,9 @@ def make_recurrent_fn(model, features):
         # Guard: never move from an already-terminal node (keep it absorbing).
         nstate = jenv.where_state(prev_term, state, nstate)
 
-        obs, legal = jax.vmap(lambda s: jenv.observe_and_mask(s, features))(nstate)
-        prior_logits_raw, value, _ = jax.vmap(
-            lambda o: model.apply(params, o))(obs)
+        # _eval shares one board analysis (observe_and_mask) and returns the
+        # legal mask we need for immobility — same XLA graph as inlining it.
+        prior_logits, value, legal = _eval(model, params, nstate, features)
 
         immobile = ~jnp.any(legal, axis=-1) & (~nstate.terminated) & (~prev_term)
         nstate = nstate.replace(
@@ -75,7 +75,6 @@ def make_recurrent_fn(model, features):
         discount = jnp.where(now_term, 0.0,
                              jnp.where(same_player, 1.0, -1.0)).astype(jnp.float32)
 
-        prior_logits = _mask_logits(prior_logits_raw, legal)
         value = jnp.where(now_term, 0.0, value).astype(jnp.float32)
         out = mctx.RecurrentFnOutput(
             reward=reward, discount=discount, prior_logits=prior_logits, value=value

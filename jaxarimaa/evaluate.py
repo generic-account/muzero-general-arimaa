@@ -68,7 +68,7 @@ def play_vs_random(model, params, rng, our_color, n_games, max_steps,
 def play_match(model, params_a, params_b, rng, a_color, n_games, max_steps,
                num_sims, max_considered, features=None, fast=False):
     """Play `params_a` (as `a_color`) vs `params_b` via search, batched over games.
-    Returns (a_wins, b_wins, unfinished). Used for arena gating (candidate vs champion).
+    Returns (a_wins, b_wins, unfinished). Used for the arena Elo metric (learner vs anchor).
     """
     rng, kinit = jax.random.split(rng)
     states = jax.vmap(jenv.init_state)(jax.random.split(kinit, n_games))

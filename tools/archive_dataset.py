@@ -25,11 +25,10 @@ import os
 import sys
 import urllib.request
 
-import numpy as np
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from games import arimaa as a  # noqa: E402
 from jaxarimaa.difftest import array_from_legacy_board  # noqa: E402
+from tools import shard_io  # noqa: E402
 
 a.init_actions()
 
@@ -107,9 +106,8 @@ def _setup_board(setup_w, setup_b):
 
 
 def _turn_tokens(turn_line):
-    """Split a turn line into move tokens, dropping the turn tag + captures."""
-    toks = turn_line.split()
-    return [t for t in toks[1:] if not t.endswith("x")]
+    """The move tokens of a turn (no tag, no captures) — the move side of _turn_moves."""
+    return [m for m, _ in _turn_moves(turn_line)]
 
 
 def _turn_moves(turn_line):
@@ -282,7 +280,7 @@ def main():
     for year in args.years:
         path = fetch_year(year, args.cache)
         n_ok = n_skip = n_fail = 0
-        boards, players, lefts, tstarts, acts, vals, mls = [], [], [], [], [], [], []
+        cols = shard_io.new_columns()
         with open(path, encoding="utf-8", errors="replace") as f:
             header = f.readline().rstrip("\n").split("\t")
             idx = {k: i for i, k in enumerate(header)}
@@ -309,30 +307,13 @@ def main():
                     continue
                 samples, winner = out
                 n_ok += 1
-                T = len(samples)
-                for i, (b64, pl, left, ts, act) in enumerate(samples):
-                    boards.append(b64)
-                    players.append(pl)
-                    lefts.append(left)
-                    tstarts.append(ts)
-                    acts.append(act)
-                    vals.append(1.0 if pl == winner else -1.0)
-                    mls.append(T - i)
+                shard_io.add_game(cols, samples, winner)
                 if args.limit and n_ok >= args.limit:
                     break
-        if boards:
-            np.savez_compressed(
-                os.path.join(args.out, f"year{year}.npz"),
-                board=np.asarray(boards, np.int8),
-                player=np.asarray(players, np.int8),
-                steps_left=np.asarray(lefts, np.int8),
-                turn_start=np.asarray(tstarts, np.int8),
-                action=np.asarray(acts, np.int16),
-                value=np.asarray(vals, np.float32),
-                moves_left=np.asarray(mls, np.int32),
-            )
+        if cols["action"]:
+            shard_io.write_shard(os.path.join(args.out, f"year{year}.npz"), cols)
         print(f"{year}: games ok={n_ok} skipped={n_skip} parse-failed={n_fail} "
-              f"samples={len(boards)}")
+              f"samples={len(cols['action'])}")
 
 
 if __name__ == "__main__":

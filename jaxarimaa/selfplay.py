@@ -10,21 +10,35 @@ host's process index — into the rng). On 1 device this is a no-op. This is wha
 self-play actually scale with the slice (otherwise every chip replays the same games).
 """
 
+import typing
+
 import jax
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 
+from . import constants as C
 from . import env as jenv
 from . import search
+
+
+class SPKnobs(typing.NamedTuple):
+    """Self-play scalar knobs. A NamedTuple (not a bare tuple) so call sites can't
+    silently misorder them; hashable, so it bakes at trace time like a tuple."""
+    resign_thresh: float = 0.9
+    full_prob: float = 0.25       # playout-cap: fraction of moves that get full sims
+    fast_sims: int = 8            # sims for the cheap (untrained, not stored) moves
+    outcome_w: float = 0.5        # value target = w*outcome + (1-w)*search_root_value
+    greedy_after: int = 0         # play argmax after this many completed turns (0 = off)
 
 
 def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
     """Self-play `batch` games for `max_steps`; return dict of [T, batch, ...].
 
-    Optional (feature-gated): playout-cap randomization (a batch-uniform coin picks a
-    cheap `fast_sims` search vs the `full` search each step; only full-search moves get
-    training weight) and resign/adjudication (end a game once |root value| clears a
-    threshold, so decided games finish and the lane resets to a fresh game).
+    Feature-gated extras: playout-cap randomization (a static count of full-sim
+    moves per game, only those stored for training; the rest use cheap `fast_sims`),
+    resign/adjudication (end a decided game early and reset the lane), truncation
+    adjudication (material_eval instead of net bootstrap for unfinished tails), and
+    a greedy-after-N-turns switch for decisive play.
     """
     num_sims, max_considered = mcts
     resign_thresh, full_prob, fast_sims, outcome_w, greedy_after = sp_knobs
@@ -112,7 +126,7 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
     #  value_target in [-1,1] (terminal -> outcome; else next value sign-flipped iff the
     #  mover changed; truncated tail -> bootstrap), and moves_left_target = normalized
     #  plies to game end (terminal -> 0; else next+1; capped; truncated tail -> capped).
-    MLCAP = 64.0
+    MLCAP = C.MOVES_LEFT_CAP
 
     def back(carry, step):
         next_player, v, ml = carry
@@ -153,19 +167,20 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         out["mtp_value_target"] = jnp.concatenate([value_target[1:], value_target[-1:]], 0)
         not_last = (jnp.arange(T) < T - 1)[:, None]
         out["mtp_mask"] = (not_last & (~recs["term"])).astype(jnp.float32)
+    if not playout_cap:
+        return out  # every step is a full-search move; no filtering needed
     # Keep only the full-search timesteps (static count n_full): fast-move rows
-    # were weight-0 filler. jnp.nonzero with static size keeps shapes fixed.
+    # aren't trained on. jnp.nonzero with static size keeps shapes fixed.
     idx = jnp.nonzero(full_steps, size=n_full)[0]
     return {k: v[idx] for k, v in out.items()}
 
 
 def make_generate(mesh, model, batch_size, max_steps, mcts, features=None,
-                  sp_knobs=(0.9, 0.25, 8, 0.5, 0)):
+                  sp_knobs=SPKnobs()):
     """Build a jitted, sharded self-play function `(params, rng) -> recs [T,B,...]`.
 
     Compiled once and reused across iterations (model/sizes/features/knobs are static).
-    `sp_knobs` = (resign_threshold, full_search_prob, fast_sims,
-    value_target_outcome_weight, greedy_after_turns).
+    `sp_knobs` is an SPKnobs (see above).
     """
     n = mesh.shape["data"]
     if batch_size % n:

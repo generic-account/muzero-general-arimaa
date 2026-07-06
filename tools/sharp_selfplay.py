@@ -20,13 +20,12 @@ import argparse
 import os
 import sys
 
-import numpy as np
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from pyrimaa import aei  # noqa: E402
 from pyrimaa.game import Game  # noqa: E402
 from pyrimaa.util import TimeControl  # noqa: E402
 
+from tools import shard_io  # noqa: E402
 from tools.archive_dataset import convert_game  # noqa: E402
 
 # NB: the "aei" argument is REQUIRED — it puts sharp into AEI protocol mode
@@ -65,22 +64,16 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     tc = TimeControl(args.tc)
 
-    boards, players, lefts, tstarts, acts, vals, mls = ([] for _ in range(7))
+    cols = shard_io.new_columns()
     n_ok = n_fail = shard = 0
 
     def flush():
-        nonlocal shard, boards, players, lefts, tstarts, acts, vals, mls
-        if not boards:
+        nonlocal shard, cols
+        if not cols["action"]:
             return
-        np.savez_compressed(
-            os.path.join(args.out, f"sharp{shard:04d}.npz"),
-            board=np.asarray(boards, np.int8), player=np.asarray(players, np.int8),
-            steps_left=np.asarray(lefts, np.int8),
-            turn_start=np.asarray(tstarts, np.int8),
-            action=np.asarray(acts, np.int16), value=np.asarray(vals, np.float32),
-            moves_left=np.asarray(mls, np.int32))
+        shard_io.write_shard(os.path.join(args.out, f"sharp{shard:04d}.npz"), cols)
         shard += 1
-        boards, players, lefts, tstarts, acts, vals, mls = ([] for _ in range(7))
+        cols = shard_io.new_columns()
 
     for gi in range(args.games):
         gold = silver = None
@@ -107,17 +100,12 @@ def main():
             continue
         samples, _ = out
         n_ok += 1
-        T = len(samples)
-        for i, (b64, pl, left, ts, act) in enumerate(samples):
-            boards.append(b64); players.append(pl); lefts.append(left)
-            tstarts.append(ts); acts.append(act)
-            vals.append(1.0 if pl == winner else -1.0)
-            mls.append(T - i)
+        shard_io.add_game(cols, samples, winner)
         if n_ok % args.shard_every == 0:
             flush()
         if (gi + 1) % 10 == 0:
             print(f"[{gi+1}/{args.games}] ok={n_ok} fail={n_fail} "
-                  f"samples={len(boards) + shard*0}", flush=True)
+                  f"buffered={len(cols['action'])}", flush=True)
 
     flush()
     print(f"DONE: games ok={n_ok} failed={n_fail} shards={shard}")

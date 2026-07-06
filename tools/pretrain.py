@@ -35,33 +35,9 @@ import jax.numpy as jnp  # noqa: E402
 from jaxarimaa import checkpoint, env as jenv, trainer  # noqa: E402
 from jaxarimaa.config import (Config, FeaturesConfig, NetConfig, TrainConfig)  # noqa: E402
 from jaxarimaa import constants as C  # noqa: E402
+from tools import shard_io  # noqa: E402
 
-MLCAP = 64.0  # matches selfplay moves-left normalization
-
-
-def load_shards(patterns):
-    files = []
-    for p in patterns:
-        files += sorted(glob.glob(p))
-    if not files:
-        raise SystemExit(f"no shards matched {patterns}")
-    keys = ["board", "player", "steps_left", "turn_start", "action", "value", "moves_left"]
-    cols = {k: [] for k in keys}
-    has_sharp = True
-    sharp = []
-    for f in files:
-        d = np.load(f)
-        for k in keys:
-            cols[k].append(d[k])
-        if "sharp_value" in d:
-            sharp.append(d["sharp_value"])
-        else:
-            has_sharp = False
-    out = {k: np.concatenate(v) for k, v in cols.items()}
-    out["sharp_value"] = (np.concatenate(sharp) if has_sharp
-                          else out["value"].copy())  # fallback = outcome (no blend effect)
-    out["_has_sharp"] = has_sharp
-    return out, files
+MLCAP = C.MOVES_LEFT_CAP  # single source of truth (matches selfplay normalization)
 
 
 def build_features(args):
@@ -89,28 +65,25 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
-    data, files = load_shards(args.shards)
+    files = [f for p in args.shards for f in sorted(glob.glob(p))]
+    if not files:
+        raise SystemExit(f"no shards matched {args.shards}")
+    data = shard_io.load_shards(files)
     N = len(data["action"])
     print(f"loaded {N} samples from {len(files)} shards | "
           f"sharp_value {'PRESENT' if data['_has_sharp'] else 'absent (outcome-only)'}")
 
+    # Build the config once: the optimizer's cosine schedule (create_train_state)
+    # needs the total step count up front, so derive it before constructing cfg.
+    steps_per_epoch = N // args.batch
     cfg = Config(net=NetConfig(channels=args.channels, blocks=args.blocks),
-                 train=TrainConfig(lr=args.lr, iterations=args.epochs,
-                                   train_batch_size=args.batch,
-                                   warmup_steps=200),
-                 features=build_features(args))
+                 features=build_features(args),
+                 train=TrainConfig(lr=args.lr, warmup_steps=200,
+                                   train_batch_size=args.batch, iterations=1,
+                                   train_steps_per_iter=max(1, args.epochs * steps_per_epoch)))
     feats = cfg.features
     key = jax.random.PRNGKey(args.seed)
     key, kinit = jax.random.split(key)
-    # NB: create_train_state builds the optimizer from cfg.train; the cosine
-    # decay_steps below is derived from epochs*steps, so set iterations already.
-    steps_per_epoch = N // args.batch
-    cfg = cfg.__class__(net=cfg.net, mcts=cfg.mcts, selfplay=cfg.selfplay,
-                        features=cfg.features,
-                        train=TrainConfig(lr=args.lr, warmup_steps=200,
-                                          train_batch_size=args.batch,
-                                          iterations=1,
-                                          train_steps_per_iter=max(1, args.epochs * steps_per_epoch)))
     state = trainer.create_train_state(cfg, kinit)
     model = trainer.make_model(cfg)
 
@@ -121,14 +94,17 @@ def main():
     sharpv = jnp.asarray(data["sharp_value"])
     ml = jnp.asarray(np.minimum(data["moves_left"], MLCAP).astype(np.float32) / MLCAP)
 
+    @jax.jit  # fuse the gather + obs-build + one-hot per step (offline speed)
     def make_batch(idx):
         st = jenv.state_from_batch(boards[idx], players[idx], lefts[idx],
                                    turn_start=tstarts[idx])
         obs = jax.vmap(lambda s: jenv.observe(s, feats))(st)  # vmap over batched State
         pol = jax.nn.one_hot(actions[idx], C.N_ACTIONS, dtype=jnp.float32)
         vt = (1.0 - args.sharp_weight) * outcome[idx] + args.sharp_weight * sharpv[idx]
+        # value target = (1-w)*game_outcome + w*sharp_winprob; no per-sample weight
+        # (loss_fn defaults missing "weight" to ones — all rows train equally).
         return {"obs": obs, "policy_target": pol, "value_target": vt,
-                "moves_left_target": ml[idx], "weight": jnp.ones_like(vt)}
+                "moves_left_target": ml[idx]}
 
     aux_w = (cfg.train.moves_left_weight, 0.0, 0.0)
     step = 0
