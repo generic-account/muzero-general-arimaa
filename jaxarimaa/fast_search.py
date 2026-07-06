@@ -223,6 +223,65 @@ def _backward_batched(tree, leaf_indices, num_hops):
     )
 
 
+def _completed_q_and_score_subset(
+    tree, batch_range, considered, gumbel, prior, considered_visit,
+    logit_max_full, value_scale=0.1, maxvisit_init=50.0, epsilon=1e-8):
+    """Bit-identical `score_considered(considered_visit, ...)` over a column
+    subset, for the DEFAULT `qtransform_completed_by_mix_value` (value_scale=0.1,
+    maxvisit_init=50, rescale_values=True, use_mixed_value=True, epsilon=1e-8).
+
+    Rounds 1+ of Sequential Halving only ever consider actions with
+    `visit == considered_visit >= 1`; those are always a subset of the round-0
+    top-m `considered` set (the only root actions the search ever visits), and
+    every other action scores `-inf` (score_considered's penalty) so it can
+    never enter the top-k. So the full-1393-wide `vmap(qtransform)` +
+    `score_considered` collapse to work over the `[B, m]` `considered` columns.
+
+    Reproduces mctx's global terms from the subset (see qtransforms.py):
+      * root prior softmax and gumbel are STATIC across rounds; passed in
+        already gathered at `considered`.
+      * every `considered` action stays visited>0 the whole search, so the
+        completed array is {qvalue[considered]} plus the mixed value at the
+        (always >= 1, since 1393 >> m) unvisited actions; hence the full-width
+        rescale min/max reduce to min/max over (qvalue[considered], mixed) and
+        `max(visit_counts)` reduces to the max over `considered`.
+      * score_considered subtracts the FULL-width logit max (`logit_max_full`).
+    """
+    b = batch_range[:, None]
+    # qvalues over the considered columns: rewards + discount * value at ROOT.
+    q = (tree.children_rewards[b, Tree.ROOT_INDEX, considered]
+         + tree.children_discounts[b, Tree.ROOT_INDEX, considered]
+         * tree.children_values[b, Tree.ROOT_INDEX, considered])   # [B, m]
+    visits = tree.children_visits[b, Tree.ROOT_INDEX, considered]   # [B, m]
+    raw_value = tree.raw_values[:, Tree.ROOT_INDEX]                 # [B]
+
+    # _compute_mixed_value over the subset (all considered actions are visited,
+    # so `where(visit>0, .)` masks are all-true on the subset).
+    sum_visit_counts = jnp.sum(visits, axis=-1)                     # [B]
+    prior = jnp.maximum(jnp.finfo(prior.dtype).tiny, prior)
+    sum_probs = jnp.sum(prior, axis=-1)                            # [B]
+    weighted_q = jnp.sum(
+        prior * q / jnp.where(sum_probs[:, None] > 0, sum_probs[:, None], 1.0),
+        axis=-1)
+    mixed = (raw_value + sum_visit_counts * weighted_q) / (sum_visit_counts + 1)
+
+    # _rescale_qvalues: min/max over the full completed array = min/max over
+    # (qvalue[considered], mixed), since all other (unvisited) actions complete
+    # to `mixed` and there is always >= 1 unvisited action (1393 >> m).
+    min_value = jnp.minimum(jnp.min(q, axis=-1), mixed)[:, None]
+    max_value = jnp.maximum(jnp.max(q, axis=-1), mixed)[:, None]
+    rescaled = (q - min_value) / jnp.maximum(max_value - min_value, epsilon)
+    maxvisit = jnp.max(visits, axis=-1)                            # [B]
+    visit_scale = (maxvisit_init + maxvisit)[:, None]
+    completed_q = visit_scale * value_scale * rescaled            # [B, m]
+
+    # score_considered over the subset (full-width logit max already given).
+    logits_norm = tree.children_prior_logits[b, Tree.ROOT_INDEX, considered] \
+        - logit_max_full[:, None]
+    penalty = jnp.where(visits == considered_visit, 0.0, -jnp.inf)
+    return jnp.maximum(-1e9, gumbel + logits_norm + completed_q) + penalty
+
+
 def _make_forced_simulate(interior_fn):
     """A vmapped tree-descent like mctx.search.simulate, but the depth-0 (root)
     action is a per-batch input instead of coming from a selection function —
@@ -320,23 +379,68 @@ def batched_gumbel_muzero_policy(
     batch_range = jnp.arange(batch_size)
     rounds = _rounds_from_schedule(max_num_considered_actions, num_simulations)
 
-    sim_offset = 0
-    for round_index, (considered_visit, width) in enumerate(rounds):
-        # --- select this round's considered set (all actions with visits == cv,
-        # ranked by gumbel + logits + completed Q; exactly K of them on-schedule).
+    # Fast subset path is only exercised for the default completed-by-mix-value
+    # qtransform with default params (see _completed_q_and_score_subset). For
+    # any other qtransform we keep the general full-width vmap(qtransform) path.
+    use_subset = (qtransform
+                  is mctx_qtransforms.qtransform_completed_by_mix_value)
+    # Root priors and their softmax never change during search -> static.
+    root_logits = tree.children_prior_logits[:, Tree.ROOT_INDEX]  # [B, 1393]
+    logit_max_full = jnp.max(root_logits, axis=-1)               # [B]
+    prior_full = jax.nn.softmax(root_logits, axis=-1)            # [B, 1393]
+
+    def select_full_width(considered_visit, width):
         summary_visits = tree.children_visits[:, Tree.ROOT_INDEX]
         completed_q = jax.vmap(qtransform, in_axes=[0, None])(
             tree, Tree.ROOT_INDEX)
         scores = mctx_seq_halving.score_considered(
-            considered_visit, gumbel, tree.children_prior_logits[:, Tree.ROOT_INDEX],
-            completed_q, summary_visits)
+            considered_visit, gumbel, root_logits, completed_q, summary_visits)
         _, top_actions = jax.lax.top_k(scores, width)  # [B, width]
+        return _apply_fallback(top_actions)
+
+    def _apply_fallback(top_actions):
         # Rows with fewer valid actions than the schedule expects: fall back to
         # the row's best action (top-1 is always valid when any action is).
         selected_invalid = jnp.take_along_axis(
             invalid_actions, top_actions, axis=1).astype(bool)
-        top_actions = jnp.where(
-            selected_invalid, top_actions[:, :1], top_actions)
+        return jnp.where(selected_invalid, top_actions[:, :1], top_actions)
+
+    considered = None       # [B, m] round-0 top-m action ids (post-fallback)
+    considered_prior = None  # [B, m] prior_full gathered at `considered`
+    gumbel_sub = None        # [B, m] gumbel gathered at `considered`
+    sim_offset = 0
+    for round_index, (considered_visit, width) in enumerate(rounds):
+        # --- select this round's considered set (all actions with visits == cv,
+        # ranked by gumbel + logits + completed Q; exactly K of them on-schedule).
+        if round_index == 0 or not use_subset:
+            top_actions = select_full_width(considered_visit, width)
+            if round_index == 0 and use_subset:
+                # Remember the round-0 selection (post-fallback) as `considered`:
+                # every subsequent round only visits a subset of it. Sort by
+                # action id so that any duplicate ids from the fallback map to
+                # adjacent columns (harmless: duplicates carry equal scores, so
+                # the round 1+ scatter into the full-width score array below is
+                # deterministic regardless of which duplicate wins the `.set`).
+                considered = jnp.sort(top_actions, axis=-1)          # [B, m]
+                considered_prior = jnp.take_along_axis(
+                    prior_full, considered, axis=1)
+                gumbel_sub = jnp.take_along_axis(gumbel, considered, axis=1)
+        else:
+            # Rounds 1+: only actions with `visit == considered_visit >= 1` are
+            # eligible, always a subset of the round-0 `considered` set (the only
+            # actions the search ever visits); every other action scores -inf.
+            # So the O(1393) qtransform/softmax/score work is done over just the
+            # `considered` columns, then scattered into a full-width -inf score
+            # array so the O(1393) top_k reproduces mctx's exact fill/tie-break
+            # for the off-schedule (fewer-eligible-than-width) rows too.
+            scores_sub = _completed_q_and_score_subset(
+                tree, batch_range, considered, gumbel_sub, considered_prior,
+                considered_visit, logit_max_full)              # [B, m]
+            scores = jnp.full(
+                (batch_size, num_actions), -jnp.inf, dtype=scores_sub.dtype)
+            scores = scores.at[batch_range[:, None], considered].set(scores_sub)
+            _, top_actions = jax.lax.top_k(scores, width)      # [B, width]
+            top_actions = _apply_fallback(top_actions)
 
         # --- descend all K considered subtrees at once (read-only, disjoint
         # below the root): one lockstep [K, B] while_loop.
