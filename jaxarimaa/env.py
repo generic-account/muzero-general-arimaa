@@ -228,6 +228,25 @@ def state_from_board(board, player, steps_left=4, terminated=False, winner=-1,
     )
 
 
+def state_from_batch(boards, players, steps_left, turn_start=None) -> State:
+    """Build a batched State [B,...] from batched raw fields (for supervised /
+    offline use: pretraining, dataset annotation). rep/terminal fields are zeroed
+    (observation + legality don't read them); pass turn_start for planes_moved."""
+    boards = jnp.asarray(boards, jnp.int8)
+    B = boards.shape[0]
+    ts = boards if turn_start is None else jnp.asarray(turn_start, jnp.int8)
+    return State(
+        board=boards,
+        player=jnp.asarray(players, jnp.int8),
+        steps_left=jnp.asarray(steps_left, jnp.int8),
+        terminated=jnp.zeros((B,), jnp.bool_),
+        winner=jnp.full((B,), -1, jnp.int8),
+        turn_start_board=ts,
+        rep_hist=jnp.zeros((B, C.REP_HISTORY), jnp.uint32),
+        rep_ptr=jnp.zeros((B,), jnp.int32),
+    )
+
+
 # ---------------------------------------------------------------------------
 # STUBS — the vectorization work goes here next.
 # ---------------------------------------------------------------------------
