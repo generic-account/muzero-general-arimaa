@@ -28,14 +28,14 @@ BUCKET = "gs://arimaa-tpu-2026-artifacts"
 
 # Scale the game batch with the slice: 1024 games PER CHIP keeps per-shard shapes
 # (and HBM footprint) identical to the validated single-chip run.
-PER_CHIP_GAMES = 1024
+PER_CHIP_GAMES = 768
 N_CHIPS = len(jax.devices())
 
 cfg = Config(
     net=NetConfig(channels=256, blocks=15),
     mcts=MCTSConfig(num_simulations=32, max_num_considered_actions=16),
     selfplay=SelfPlayConfig(
-        batch_size=PER_CHIP_GAMES * N_CHIPS, max_steps=320,
+        batch_size=PER_CHIP_GAMES * N_CHIPS, max_steps=256,
         resign_threshold=0.95,          # conservative early; value head must earn it
         full_search_prob=0.25, fast_sims=8,
     ),
