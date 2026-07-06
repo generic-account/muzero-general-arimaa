@@ -62,9 +62,14 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                 cfg.selfplay.fast_sims)
     generate = selfplay.make_generate(mesh, model, cfg.selfplay.batch_size,
                                       cfg.selfplay.max_steps, mcts, feats, sp_knobs)
-    # Arena gating: self-play from a gated champion; promote the learner when it beats
-    # the champion. When off, self-play uses the latest params (current behavior).
-    champion = state.params if feats.arena_gating else None
+    # Arena as an ELO METRIC (not a data gate): self-play ALWAYS uses the learner —
+    # gating self-play data on a champion starved the learner of on-policy data when
+    # arena samples were noisy (observed in the first long run). Instead we keep a
+    # frozen ANCHOR; every arena_interval we play learner-vs-anchor, count unfinished
+    # games as draws, convert the score to an Elo delta, and re-freeze the anchor
+    # when the learner clearly passes it — producing a chained elo/estimate curve.
+    anchor = state.params if feats.arena_gating else None
+    anchor_elo = 0.0
 
     # Global per-iteration work (all devices/hosts): games and env-steps generated.
     games_per_iter = cfg.selfplay.batch_size
@@ -85,8 +90,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         # --- self-play (each device plays distinct games; output sharded) ---
         t0 = time.time()
         key, ksp = jax.random.split(key)
-        sp_params = champion if feats.arena_gating else state.params
-        recs = generate(sp_params, ksp)
+        recs = generate(state.params, ksp)  # always the learner's params
         jax.block_until_ready(recs)                # settle async dispatch before timing
         sp_t = time.time() - t0
         flat = selfplay.flatten_samples(recs)
@@ -158,27 +162,33 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                 print(f"          eval vs random (gold): W{w} L{l} unfinished{u}")
 
         if feats.arena_gating and (it + 1) % tc.arena_interval == 0:
+            import math
             key, ka1, ka2 = jax.random.split(key, 3)
             ns, nc = cfg.mcts.num_simulations, cfg.mcts.max_num_considered_actions
             ms, g = (tc.eval_max_steps or cfg.selfplay.max_steps), tc.arena_games
-            a1, b1, _ = evaluate.play_match(model, state.params, champion, ka1, 0,
-                                            g, ms, ns, nc, feats,
-                                            feats.fast_search)  # candidate = gold
-            a2, b2, _ = evaluate.play_match(model, champion, state.params, ka2, 0,
-                                            g, ms, ns, nc, feats,
-                                            feats.fast_search)  # candidate = silver
-            cand_wins = int(a1) + int(b2)
-            decided = cand_wins + int(b1) + int(a2)
-            wr = cand_wins / decided if decided else 0.0
-            promoted = wr > tc.arena_threshold
-            if promoted:
-                champion = state.params
-            logger.write(it, {"arena/cand_win_rate": wr,
+            a1, b1, u1 = evaluate.play_match(model, state.params, anchor, ka1, 0,
+                                             g, ms, ns, nc, feats,
+                                             feats.fast_search)  # learner = gold
+            a2, b2, u2 = evaluate.play_match(model, anchor, state.params, ka2, 0,
+                                             g, ms, ns, nc, feats,
+                                             feats.fast_search)  # learner = silver
+            wins = int(a1) + int(b2)
+            losses = int(b1) + int(a2)
+            draws = int(u1) + int(u2)  # unfinished games count as draws
+            total = wins + losses + draws
+            score = (wins + 0.5 * draws) / max(total, 1)
+            sc = min(max(score, 0.01), 0.99)
+            elo_est = anchor_elo + 400.0 * math.log10(sc / (1.0 - sc))
+            promoted = score > tc.arena_threshold
+            if promoted:  # learner clearly past the anchor: re-freeze the chain here
+                anchor = state.params
+                anchor_elo = elo_est
+            logger.write(it, {"arena/score": score, "arena/decided": wins + losses,
                               "arena/promoted": float(promoted),
-                              "arena/decided": decided})
+                              "elo/estimate": elo_est, "elo/anchor": anchor_elo})
             if verbose:
-                print(f"          arena: candidate win-rate {wr:.2f} over {decided} "
-                      f"decided -> {'PROMOTED' if promoted else 'kept champion'}")
+                print(f"          arena: score {score:.2f} (W{wins} L{losses} D{draws})"
+                      f" -> elo~{elo_est:+.0f}{' [anchor re-frozen]' if promoted else ''}")
 
         if ckpt_mgr:
             ckpt_mgr.save(it, state)  # periodic; Orbax gates by save-interval

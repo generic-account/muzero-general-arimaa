@@ -145,3 +145,13 @@ if __name__ == "__main__":
         assert all(np.array_equal(check[k], tables[k]) for k in tables)
     print(f"wrote {_NPZ_PATH} ({_NPZ_PATH.stat().st_size} bytes, "
           f"{len(tables['frm_x'])} actions)")
+
+
+# ---------------------------------------------------------------------------
+# Zobrist hashing for the repetition rule (uint32; row 0 = empty contributes 0).
+# ---------------------------------------------------------------------------
+_ZRNG = np.random.RandomState(20260705)
+ZOBRIST_CELLS = _ZRNG.randint(1, 2**32, size=(13, N_CELLS), dtype=np.uint32)
+ZOBRIST_CELLS[0, :] = 0  # empty cells contribute nothing
+ZOBRIST_PLAYER = _ZRNG.randint(1, 2**32, size=(2,), dtype=np.uint32)
+REP_HISTORY = 64  # turn-end positions remembered per game (ring buffer)

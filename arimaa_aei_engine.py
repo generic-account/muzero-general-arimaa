@@ -290,6 +290,15 @@ class MoveChooser:
             step.opOldPos, step.opNewPos = spec.op_old_pos, spec.op_new_pos
             aei_steps.extend(self._render_step(board, step))
             board.do_step(step)
+        if not aei_steps:
+            # Never emit an empty move (crashes AEI controllers): if the search
+            # degenerately produced no step, fall back to any legal step; a truly
+            # immobilized position yields none (a loss under Arimaa rules).
+            for st in board.possible_steps():
+                if board.step_cost(st) <= board.state.left:
+                    aei_steps.extend(self._render_step(board, st))
+                    board.do_step(st)
+                    break
         return " ".join(aei_steps)
 
     def choose(self, color, short64):

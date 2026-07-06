@@ -70,6 +70,15 @@ def _gather(grid, vx, vy):
 # Observation encoding  (mirrors legacy ArimaaEnv.get_observation)
 # ---------------------------------------------------------------------------
 _TRAP_PLANE = jnp.asarray(C.TRAP_PLANE)
+_ZCELLS = jnp.asarray(C.ZOBRIST_CELLS)    # [13, 64] uint32
+_ZPLAYER = jnp.asarray(C.ZOBRIST_PLAYER)  # [2] uint32
+
+
+def position_hash(board, player):
+    """Zobrist hash of (board, side-to-move). Empty cells contribute 0."""
+    cell_keys = _ZCELLS[board.reshape(-1).astype(jnp.int32), jnp.arange(C.N_CELLS)]
+    h = jax.lax.reduce(cell_keys, jnp.uint32(0), jax.lax.bitwise_xor, (0,))
+    return h ^ _ZPLAYER[player.astype(jnp.int32)]
 
 
 def observe(state: State, features=None) -> jnp.ndarray:
@@ -141,6 +150,8 @@ def init_state(key) -> State:
     board = board.at[6:8, :].set(gold_codes.reshape(2, C.BOARD))
     board = board.at[0:2, :].set(silver_codes.reshape(2, C.BOARD))
 
+    rep_hist = jnp.zeros((C.REP_HISTORY,), jnp.uint32)
+    rep_hist = rep_hist.at[0].set(position_hash(board, jnp.int8(C.GOLD)))
     return State(
         board=board,
         player=jnp.int8(C.GOLD),
@@ -148,6 +159,8 @@ def init_state(key) -> State:
         terminated=jnp.bool_(False),
         winner=jnp.int8(-1),
         turn_start_board=board,
+        rep_hist=rep_hist,
+        rep_ptr=jnp.int32(1),
     )
 
 
@@ -167,6 +180,8 @@ def state_from_board(board, player, steps_left=4, terminated=False, winner=-1,
         terminated=jnp.bool_(terminated),
         winner=jnp.int8(winner),
         turn_start_board=ts,
+        rep_hist=jnp.zeros((C.REP_HISTORY,), jnp.uint32),
+        rep_ptr=jnp.int32(0),
     )
 
 
@@ -240,7 +255,11 @@ def legal_action_mask(state: State) -> jnp.ndarray:
     step_legal = jnp.where(_IS_PUSH, push_legal,
                            jnp.where(_IS_PULL, pull_legal, plain_legal))
 
-    end_det = (left != 4)  # deterministic part of END_TURN legality
+    # END_TURN: not at turn start, and ending now must not create a 3rd repetition
+    # of (position, opponent-to-move) — the Arimaa repetition rule.
+    end_hash = position_hash(board, (1 - player).astype(jnp.int8))
+    would_repeat = jnp.sum(state.rep_hist == end_hash) >= 2
+    end_det = (left != 4) & (~would_repeat)
     alive = ~state.terminated
     return jnp.where(_IS_END, end_det & alive, step_legal & alive)
 
@@ -285,7 +304,9 @@ def _winner_after(board, mover):
 
     sub = State(board=board, player=B.astype(jnp.int8), steps_left=jnp.int8(4),
                 terminated=jnp.bool_(False), winner=jnp.int8(-1),
-                turn_start_board=board)
+                turn_start_board=board,
+                rep_hist=jnp.zeros((C.REP_HISTORY,), jnp.uint32),
+                rep_ptr=jnp.int32(0))
     immobB = ~jnp.any(legal_action_mask(sub)[:C.END_TURN])
 
     # apply in increasing priority so the highest-priority condition wins
@@ -328,9 +349,24 @@ def step(state: State, action) -> State:
     left_after = state.steps_left - cost.astype(jnp.int8)
     finish = is_end | (left_after == 0)
     has_win, winner = _winner_after(moved, state.player)
-    terminal = finish & has_win
 
-    new_player = jnp.where(finish, (1 - state.player).astype(jnp.int8), state.player)
+    # Repetition rule at turn end: a 3rd occurrence of (position, side-to-move)
+    # loses for the REPEATER (rule-faithful anti-shuffling; NOTE the legacy env
+    # awards this the other way — a known legacy quirk we deliberately diverge
+    # from). Board-based wins (goal/immobilization/no-rabbits) take precedence.
+    opp = (1 - state.player).astype(jnp.int8)
+    end_hash = position_hash(moved, opp)
+    rep3 = finish & (jnp.sum(state.rep_hist == end_hash) >= 2)
+    winner = jnp.where(has_win, winner, opp)          # repeater loses if rep3
+    terminal = finish & (has_win | rep3)
+
+    # Record the turn-end position in the ring buffer (only on finish).
+    slot = state.rep_ptr % C.REP_HISTORY
+    new_hist = jnp.where(finish, state.rep_hist.at[slot].set(end_hash),
+                         state.rep_hist)
+    new_ptr = jnp.where(finish, state.rep_ptr + 1, state.rep_ptr)
+
+    new_player = jnp.where(finish, opp, state.player)
     new_left = jnp.where(finish, jnp.int8(4), left_after)
     new_turn_start = jnp.where(finish, moved, state.turn_start_board)
 
@@ -341,4 +377,6 @@ def step(state: State, action) -> State:
         terminated=terminal,
         winner=jnp.where(terminal, winner, jnp.int8(-1)),
         turn_start_board=new_turn_start,
+        rep_hist=new_hist,
+        rep_ptr=new_ptr,
     )
