@@ -16,14 +16,16 @@ import jax
 
 cfg = Config(
     net=NetConfig(channels=256, blocks=15),
-    mcts=MCTSConfig(num_simulations=32, max_num_considered_actions=16),
-    selfplay=SelfPlayConfig(batch_size=1024 * len(jax.devices()), max_steps=256,
-                            resign_threshold=0.95),
-    train=TrainConfig(train_batch_size=1024, iterations=4, train_steps_per_iter=16,
+    mcts=MCTSConfig(num_simulations=128, max_num_considered_actions=16),
+    selfplay=SelfPlayConfig(batch_size=512 * len(jax.devices()), max_steps=512,
+                            resign_threshold=0.95, full_search_prob=0.25,
+                            fast_sims=16, greedy_after_turns=15),
+    train=TrainConfig(train_batch_size=1024, iterations=3, train_steps_per_iter=16,
                       replay_capacity=262144, warmup_steps=8,
                       compile_cache_dir="gs://arimaa-tpu-2026-artifacts/compile-cache"),
     features=FeaturesConfig(bf16=True, fast_search=True, resign=True, playout_cap=True,
-                            symmetry_aug=True, planes_frozen=True, planes_trap=True,
+                            symmetry_aug=True, adjudicate_truncation=True,
+                            moves_left_head=True, planes_frozen=True, planes_trap=True,
                             planes_step_in_turn=True, planes_moved=True),
 )
 
