@@ -81,7 +81,15 @@ def position_hash(board, player):
     return h ^ _ZPLAYER[player.astype(jnp.int32)]
 
 
-def observe(state: State, features=None) -> jnp.ndarray:
+def analyze_board(board):
+    """Shared board analysis: (occ, col, rnk, frozen). Computed once and threaded
+    into both observe() and legal_action_mask() by the search path (via
+    observe_and_mask) so the piece-grid + frozen work isn't done twice per state."""
+    occ, col, rnk = _piece_grids(board)
+    return occ, col, rnk, _frozen_grid(occ, col, rnk)
+
+
+def observe(state: State, features=None, grids=None) -> jnp.ndarray:
     """Return a (P, 8, 8) float32 observation for `state`.
 
     Base 13 planes (always): 6 GOLD-rank + 6 SILVER-rank one-hots + side-to-move.
@@ -98,8 +106,9 @@ def observe(state: State, features=None) -> jnp.ndarray:
 
     if features is not None:
         if features.planes_frozen:
-            occ, col, rnk = _piece_grids(state.board)
-            planes.append(_frozen_grid(occ, col, rnk).astype(jnp.float32)[None])
+            frozen = grids[3] if grids is not None else _frozen_grid(
+                *_piece_grids(state.board))
+            planes.append(frozen.astype(jnp.float32)[None])
         if features.planes_trap:
             planes.append(_TRAP_PLANE[None])
         if features.planes_step_in_turn:
@@ -110,6 +119,16 @@ def observe(state: State, features=None) -> jnp.ndarray:
             planes.append(moved[None])
 
     return jnp.concatenate(planes, axis=0)  # (P,8,8)
+
+
+def observe_and_mask(state: State, features=None):
+    """(observe(state), legal_action_mask(state)) sharing ONE board analysis.
+
+    The search evaluates both on every node; computing occ/col/rnk/frozen once
+    (instead of once per call) removes the largest duplicated env work per
+    expansion. Byte-identical to calling the two functions separately."""
+    grids = analyze_board(state.board)
+    return observe(state, features, grids=grids), legal_action_mask(state, grids=grids)
 
 
 def where_state(mask, if_true: State, if_false: State) -> State:
@@ -211,18 +230,24 @@ def _frozen_grid(occ, col, rnk):
     return occ & stronger & (~friendly)
 
 
-def legal_action_mask(state: State) -> jnp.ndarray:
+def legal_action_mask(state: State, grids=None) -> jnp.ndarray:
     """bool[N_ACTIONS] legality mask, a pure function of (board, player, steps_left).
 
     Evaluates every action's legality in parallel against the static action table.
     Does NOT apply the stateful 3-fold-repetition restriction on END_TURN — that is
     the driver's / step-bookkeeping's job (see difftest for how this is isolated).
+
+    `grids` optionally supplies a precomputed (occ, col, rnk, frozen) bundle from
+    analyze_board — avoids recomputing it when observe() already did (search path).
     """
     board = state.board
     player = state.player.astype(jnp.int32)
     left = state.steps_left.astype(jnp.int32)
-    occ, col, rnk = _piece_grids(board)
-    frozen = _frozen_grid(occ, col, rnk)
+    if grids is not None:
+        occ, col, rnk, frozen = grids
+    else:
+        occ, col, rnk = _piece_grids(board)
+        frozen = _frozen_grid(occ, col, rnk)
 
     # Mover (our unfrozen piece at `from`)
     f_occ = _gather(occ, _FX, _FY)

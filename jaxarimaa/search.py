@@ -34,10 +34,11 @@ def _mask_logits(logits, legal):
 
 
 def _eval(model, params, states, features):
-    """Batched network eval + legal-masking for a batch of States."""
-    obs = jax.vmap(lambda s: jenv.observe(s, features))(states)
+    """Batched network eval + legal-masking for a batch of States.
+
+    obs and legal share one board analysis per state (observe_and_mask)."""
+    obs, legal = jax.vmap(lambda s: jenv.observe_and_mask(s, features))(states)
     logits, value, _ = jax.vmap(lambda o: model.apply(params, o))(obs)
-    legal = jax.vmap(jenv.legal_action_mask)(states)
     return _mask_logits(logits, legal), value, legal
 
 
@@ -56,10 +57,9 @@ def make_recurrent_fn(model, features):
         # Guard: never move from an already-terminal node (keep it absorbing).
         nstate = jenv.where_state(prev_term, state, nstate)
 
-        obs = jax.vmap(lambda s: jenv.observe(s, features))(nstate)
+        obs, legal = jax.vmap(lambda s: jenv.observe_and_mask(s, features))(nstate)
         prior_logits_raw, value, _ = jax.vmap(
             lambda o: model.apply(params, o))(obs)
-        legal = jax.vmap(jenv.legal_action_mask)(nstate)
 
         immobile = ~jnp.any(legal, axis=-1) & (~nstate.terminated) & (~prev_term)
         nstate = nstate.replace(

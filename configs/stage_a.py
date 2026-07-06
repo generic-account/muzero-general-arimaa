@@ -59,5 +59,5 @@ cfg = Config(
     ),
 )
 
-train.train(cfg, out_path=f"results/jaxarimaa/{RUN}.pkl", eval_every=5,
+train.train(cfg, out_path=f"results/jaxarimaa/{RUN}.pkl", eval_every=8,
             logdir=f"results/jaxarimaa/{RUN}_tb")
