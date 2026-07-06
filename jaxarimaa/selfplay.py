@@ -27,7 +27,7 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
     threshold, so decided games finish and the lane resets to a fresh game).
     """
     num_sims, max_considered = mcts
-    resign_thresh, full_prob, fast_sims = sp_knobs
+    resign_thresh, full_prob, fast_sims, outcome_w = sp_knobs
     playout_cap = features is not None and features.playout_cap
     resign = features is not None and features.resign
     if features is not None and features.fast_search:
@@ -74,6 +74,7 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
                 winner=jnp.where(adj & (~nstates.terminated), adj_winner, nstates.winner))
         rec["term"] = nstates.terminated
         rec["winner"] = nstates.winner
+        rec["root_v"] = root_v.astype(jnp.float32)
         fresh = jax.vmap(jenv.init_state)(jax.random.split(kr, batch))
         nstates = jenv.where_state(nstates.terminated, fresh, nstates)  # auto-reset
         return (nstates, rng), rec
@@ -106,6 +107,13 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         {"player": recs["player"], "term": recs["term"], "winner": recs["winner"]},
         reverse=True,
     )
+    # Blend the (often truncation-bootstrapped) outcome target with the SEARCH
+    # root value: search values incorporate real lookahead, breaking the
+    # self-confirming value collapse seen when most games truncate. Terminal
+    # steps keep their exact ground-truth outcome.
+    blended = outcome_w * value_target + (1.0 - outcome_w) * recs["root_v"]
+    value_target = jnp.where(recs["term"], value_target, blended)
+
     # Only store aux targets when their head is enabled — otherwise they are dead
     # weight in the replay buffer (HBM). Baseline (heads off) carries neither.
     out = {
@@ -127,11 +135,11 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
 
 
 def make_generate(mesh, model, batch_size, max_steps, mcts, features=None,
-                  sp_knobs=(0.9, 0.25, 8)):
+                  sp_knobs=(0.9, 0.25, 8, 0.5)):
     """Build a jitted, sharded self-play function `(params, rng) -> recs [T,B,...]`.
 
     Compiled once and reused across iterations (model/sizes/features/knobs are static).
-    `sp_knobs` = (resign_threshold, full_search_prob, fast_sims).
+    `sp_knobs` = (resign_threshold, full_search_prob, fast_sims, value_target_outcome_weight).
     """
     n = mesh.shape["data"]
     if batch_size % n:

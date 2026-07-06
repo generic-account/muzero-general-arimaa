@@ -35,12 +35,12 @@ cfg = Config(
     net=NetConfig(channels=256, blocks=15),
     mcts=MCTSConfig(num_simulations=32, max_num_considered_actions=16),
     selfplay=SelfPlayConfig(
-        batch_size=PER_CHIP_GAMES * N_CHIPS, max_steps=192,
+        batch_size=PER_CHIP_GAMES * N_CHIPS, max_steps=320,
         resign_threshold=0.95,          # conservative early; value head must earn it
         full_search_prob=0.25, fast_sims=8,
     ),
     train=TrainConfig(
-        train_batch_size=1024, iterations=ITERS, train_steps_per_iter=64,
+        train_batch_size=1024, iterations=ITERS, train_steps_per_iter=16,
         replay_capacity=262144, warmup_steps=100, lr=2e-3,
         ckpt_interval=5, ckpt_max_keep=3,
         # Local Orbax dir: async sharded saves straight to gs:// time out on

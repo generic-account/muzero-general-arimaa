@@ -65,6 +65,8 @@ class SelfPlayConfig:
     # playout-cap randomization (features.playout_cap)
     full_search_prob: float = 0.25  # fraction of moves that get the full-sim search (+trained)
     fast_sims: int = 8              # simulations for cheap "fast" moves (not trained on)
+    # value target = w*outcome + (1-w)*search_root_value on non-terminal steps
+    value_target_outcome_weight: float = 0.5
 
 
 @dataclass(frozen=True)

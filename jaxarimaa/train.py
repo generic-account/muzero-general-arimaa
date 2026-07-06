@@ -59,7 +59,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         print(f"features: {active or 'baseline (none)'}")
     mcts = (cfg.mcts.num_simulations, cfg.mcts.max_num_considered_actions)
     sp_knobs = (cfg.selfplay.resign_threshold, cfg.selfplay.full_search_prob,
-                cfg.selfplay.fast_sims)
+                cfg.selfplay.fast_sims, cfg.selfplay.value_target_outcome_weight)
     generate = selfplay.make_generate(mesh, model, cfg.selfplay.batch_size,
                                       cfg.selfplay.max_steps, mcts, feats, sp_knobs)
     # Arena as an ELO METRIC (not a data gate): self-play ALWAYS uses the learner —
