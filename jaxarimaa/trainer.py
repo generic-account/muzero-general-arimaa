@@ -101,7 +101,8 @@ def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0)):
     if "deep" in aux:
         dl = 0.0
         for pl_i, v_i in aux["deep"]:
-            dp = -jnp.sum(batch["policy_target"] * jax.nn.log_softmax(pl_i, axis=-1), axis=-1)
+            dp = -jnp.sum(batch["policy_target"].astype(jnp.float32)
+                          * jax.nn.log_softmax(pl_i, axis=-1), axis=-1)
             dv = (v_i - batch["value_target"]) ** 2
             dl = dl + _weighted_mean(dp, w, wsum) + value_weight * _weighted_mean(dv, w, wsum)
         dl = dl / len(aux["deep"])
