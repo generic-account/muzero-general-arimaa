@@ -47,9 +47,25 @@ def make_recurrent_fn(model, features):
         prev_player = state.player
         prev_term = state.terminated
 
-        nstate = jax.vmap(jenv.step)(state, action)
+        # Deferred immobility: step() skips its internal legal-mask evaluation;
+        # we derive immobility from the mask computed below anyway (an empty
+        # mask == the side to move is immobilized and loses) — halving the
+        # per-expansion mask work.
+        nstate = jax.vmap(lambda s, a: jenv.step(s, a, defer_immobility=True))(
+            state, action)
         # Guard: never move from an already-terminal node (keep it absorbing).
         nstate = jenv.where_state(prev_term, state, nstate)
+
+        obs = jax.vmap(lambda s: jenv.observe(s, features))(nstate)
+        prior_logits_raw, value, _ = jax.vmap(
+            lambda o: model.apply(params, o))(obs)
+        legal = jax.vmap(jenv.legal_action_mask)(nstate)
+
+        immobile = ~jnp.any(legal, axis=-1) & (~nstate.terminated) & (~prev_term)
+        nstate = nstate.replace(
+            terminated=nstate.terminated | immobile,
+            winner=jnp.where(immobile, (1 - nstate.player).astype(nstate.winner.dtype),
+                             nstate.winner))
 
         now_term = nstate.terminated
         newly_term = now_term & (~prev_term)
@@ -59,7 +75,7 @@ def make_recurrent_fn(model, features):
         discount = jnp.where(now_term, 0.0,
                              jnp.where(same_player, 1.0, -1.0)).astype(jnp.float32)
 
-        prior_logits, value, _ = _eval(model, params, nstate, features)
+        prior_logits = _mask_logits(prior_logits_raw, legal)
         value = jnp.where(now_term, 0.0, value).astype(jnp.float32)
         out = mctx.RecurrentFnOutput(
             reward=reward, discount=discount, prior_logits=prior_logits, value=value

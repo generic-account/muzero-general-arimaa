@@ -285,10 +285,16 @@ def _apply_traps(board):
     return nb
 
 
-def _winner_after(board, mover):
+def _winner_after(board, mover, check_immobility=True):
     """Board-based win check after `mover` completed a turn (mirrors legacy
     check_win_reason ordering). Returns (has_winner, winner). Repetition (stateful)
     is handled elsewhere.
+
+    `check_immobility=False` skips the (expensive) internal legal-mask evaluation;
+    callers that already compute the next state's legal mask (the search's
+    recurrent_fn) derive immobility from it instead — an empty mask means the
+    side to move is immobilized (END_TURN is always legal mid-turn, so an empty
+    mask can only occur at a fresh turn with no legal step).
     """
     A = mover.astype(jnp.int32)
     B = 1 - A
@@ -302,12 +308,15 @@ def _winner_after(board, mover):
     norabB = ~jnp.any(board == B_rab)
     norabA = ~jnp.any(board == A_rab)
 
-    sub = State(board=board, player=B.astype(jnp.int8), steps_left=jnp.int8(4),
-                terminated=jnp.bool_(False), winner=jnp.int8(-1),
-                turn_start_board=board,
-                rep_hist=jnp.zeros((C.REP_HISTORY,), jnp.uint32),
-                rep_ptr=jnp.int32(0))
-    immobB = ~jnp.any(legal_action_mask(sub)[:C.END_TURN])
+    if check_immobility:
+        sub = State(board=board, player=B.astype(jnp.int8), steps_left=jnp.int8(4),
+                    terminated=jnp.bool_(False), winner=jnp.int8(-1),
+                    turn_start_board=board,
+                    rep_hist=jnp.zeros((C.REP_HISTORY,), jnp.uint32),
+                    rep_ptr=jnp.int32(0))
+        immobB = ~jnp.any(legal_action_mask(sub)[:C.END_TURN])
+    else:
+        immobB = jnp.bool_(False)
 
     # apply in increasing priority so the highest-priority condition wins
     w = jnp.int32(-1)
@@ -318,12 +327,18 @@ def _winner_after(board, mover):
     return h, w.astype(jnp.int8)
 
 
-def step(state: State, action) -> State:
+def step(state: State, action, defer_immobility=False) -> State:
     """Apply `action` (a scalar index) to `state`, returning the next State.
 
     Handles the board mutation (plain step / push / pull, in legacy do_step order),
     trap removal, step-cost accounting, turn transition, and board-based win
     detection. Assumes `action` is legal (see legal_action_mask). Pure & jittable.
+
+    `defer_immobility=True` skips the internal immobilization check (which costs a
+    full legal-mask evaluation): callers that compute the next state's legal mask
+    anyway (the search) apply `terminated |= ~any(mask)`, `winner = 1 - player`
+    themselves — halving the per-expansion mask work. Default is the exact,
+    differential-tested behavior.
     """
     a = jnp.asarray(action, jnp.int32)
     fx, fy = _FX[a], _FY[a]
@@ -348,7 +363,8 @@ def step(state: State, action) -> State:
 
     left_after = state.steps_left - cost.astype(jnp.int8)
     finish = is_end | (left_after == 0)
-    has_win, winner = _winner_after(moved, state.player)
+    has_win, winner = _winner_after(moved, state.player,
+                                    check_immobility=not defer_immobility)
 
     # Repetition rule at turn end: a 3rd occurrence of (position, side-to-move)
     # loses for the REPEATER (rule-faithful anti-shuffling; NOTE the legacy env

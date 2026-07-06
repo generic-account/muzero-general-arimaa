@@ -59,9 +59,14 @@ class MFUMeter:
         fwd_sp = forward_flops(model, params, obs_shape, sp.batch_size)
         fwd_tr = forward_flops(model, params, obs_shape, tr.train_batch_size)
         # Self-play: per move-step, one root eval + num_simulations recurrent evals.
-        # (With playout_cap on, full-sim steps are a fraction — this is the upper
-        # estimate at full sims; fine for a utilization lower bound.)
-        self.selfplay_flops = fwd_sp * (mc.num_simulations + 1) * sp.max_steps
+        # With playout_cap, only `full_search_prob` of steps use full sims; the rest
+        # use fast_sims — account for the mixture or MFU is overstated ~2x.
+        if cfg.features.playout_cap:
+            per_step = (sp.full_search_prob * (mc.num_simulations + 1)
+                        + (1 - sp.full_search_prob) * (sp.fast_sims + 1))
+        else:
+            per_step = mc.num_simulations + 1
+        self.selfplay_flops = fwd_sp * per_step * sp.max_steps
         # Training: fwd+bwd ~= 3x forward, per gradient step.
         self.train_flops = fwd_tr * 3.0 * tr.train_steps_per_iter
         self.peak = device_peak_flops()
