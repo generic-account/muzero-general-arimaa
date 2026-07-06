@@ -25,6 +25,7 @@ class FeaturesConfig:
     arena_gating: bool = False         # self-play from a gated champion; promote by win-rate
     resign: bool = False               # adjudicate decided self-play games early (more games/rollout)
     playout_cap: bool = False          # KataGo playout-cap: cheap "fast" moves, train only on "full" moves
+    adjudicate_truncation: bool = False  # truncated games: material/advancement adjudication (env.material_eval) instead of net bootstrap
     fast_search: bool = False          # batched sequential halving (wave-parallel Gumbel; see fast_search.py)
     # --- architecture (auxiliary heads) ---
     moves_left_head: bool = False      # aux head predicting (normalized) plies to game end
@@ -67,6 +68,9 @@ class SelfPlayConfig:
     fast_sims: int = 8              # simulations for cheap "fast" moves (not trained on)
     # value target = w*outcome + (1-w)*search_root_value on non-terminal steps
     value_target_outcome_weight: float = 0.5
+    # optima-style decisiveness: play greedily (argmax of search weights) once a
+    # game passes this many completed TURNS (0 = off; optima uses temp->0 @ 15)
+    greedy_after_turns: int = 0
 
 
 @dataclass(frozen=True)

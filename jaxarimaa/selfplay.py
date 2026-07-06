@@ -27,7 +27,7 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
     threshold, so decided games finish and the lane resets to a fresh game).
     """
     num_sims, max_considered = mcts
-    resign_thresh, full_prob, fast_sims, outcome_w = sp_knobs
+    resign_thresh, full_prob, fast_sims, outcome_w, greedy_after = sp_knobs
     playout_cap = features is not None and features.playout_cap
     resign = features is not None and features.resign
     if features is not None and features.fast_search:
@@ -67,6 +67,14 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
             rng, ks, kr = jax.random.split(rng, 3)
             action, weights, root_v = _search(num_sims)((states, ks))
 
+        if greedy_after:
+            # Decisive play after the opening (optima's temp->0 @ move 15): switch
+            # from Gumbel's exploration pick to the argmax of the improved policy.
+            # rep_ptr starts at 1 and increments per finished turn.
+            greedy = states.rep_ptr - 1 >= greedy_after
+            action = jnp.where(greedy, jnp.argmax(weights, -1).astype(action.dtype),
+                               action)
+
         rec = {
             # bf16 storage: obs values (0/1 and quarters) and softmax policy targets
             # are bf16-exact/safe; halves the two largest scan/replay tensors.
@@ -91,9 +99,14 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
 
     (final_states, _), recs = jax.lax.scan(body, (states, rng), full_steps)
 
-    # Bootstrap value for truncated tails: net value at the final rolled-to states.
-    fobs = jax.vmap(lambda s: jenv.observe(s, features))(final_states)
-    _, boot_val, _ = jax.vmap(lambda o: model.apply(params, o))(fobs)
+    # Value carried into truncated tails: material/advancement adjudication (a
+    # grounded, discriminative signal — breaks the self-confirming near-zero
+    # bootstrap loop) or, when the feature is off, the net's own value.
+    if features is not None and features.adjudicate_truncation:
+        boot_val = jax.vmap(jenv.material_eval)(final_states)
+    else:
+        fobs = jax.vmap(lambda s: jenv.observe(s, features))(final_states)
+        _, boot_val, _ = jax.vmap(lambda o: model.apply(params, o))(fobs)
 
     # Reverse scan producing, per step from the side-to-move perspective:
     #  value_target in [-1,1] (terminal -> outcome; else next value sign-flipped iff the
@@ -147,11 +160,12 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
 
 
 def make_generate(mesh, model, batch_size, max_steps, mcts, features=None,
-                  sp_knobs=(0.9, 0.25, 8, 0.5)):
+                  sp_knobs=(0.9, 0.25, 8, 0.5, 0)):
     """Build a jitted, sharded self-play function `(params, rng) -> recs [T,B,...]`.
 
     Compiled once and reused across iterations (model/sizes/features/knobs are static).
-    `sp_knobs` = (resign_threshold, full_search_prob, fast_sims, value_target_outcome_weight).
+    `sp_knobs` = (resign_threshold, full_search_prob, fast_sims,
+    value_target_outcome_weight, greedy_after_turns).
     """
     n = mesh.shape["data"]
     if batch_size % n:

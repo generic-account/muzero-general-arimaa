@@ -121,6 +121,30 @@ def observe(state: State, features=None, grids=None) -> jnp.ndarray:
     return jnp.concatenate(planes, axis=0)  # (P,8,8)
 
 
+# Classic-ish Arimaa piece values indexed by cell code (0=empty, 1..6 gold
+# rabbit..elephant, 7..12 silver), gold-positive.
+_PIECE_VALUE = jnp.asarray(
+    [0.0, 1.0, 2.0, 2.5, 3.0, 5.0, 8.0,
+     -1.0, -2.0, -2.5, -3.0, -5.0, -8.0], jnp.float32)
+_YGRID = jnp.arange(C.BOARD, dtype=jnp.float32)[:, None] * jnp.ones(
+    (1, C.BOARD), jnp.float32)
+
+
+def material_eval(state: State):
+    """Shaped adjudication value in (-1, 1) from the SIDE-TO-MOVE's perspective:
+    material balance + furthest-rabbit advancement. Used to adjudicate games
+    truncated without a winner (features.adjudicate_truncation) — the Arimaa
+    analog of classical bots' handcrafted eval, deliberately crude."""
+    vals = _PIECE_VALUE[state.board.astype(jnp.int32)]
+    mat = jnp.sum(vals)  # gold-positive; full material sums to 0
+    # gold rabbits (code 1) race toward y=0; silver rabbits (code 7) toward y=7
+    gold_adv = jnp.max(jnp.where(state.board == 1, 7.0 - _YGRID, 0.0))
+    silver_adv = jnp.max(jnp.where(state.board == 7, _YGRID, 0.0))
+    adv = (gold_adv - silver_adv) / 7.0
+    gold_score = jnp.tanh(mat / 12.0 + 0.3 * adv)
+    return jnp.where(state.player == C.GOLD, gold_score, -gold_score)
+
+
 def observe_and_mask(state: State, features=None):
     """(observe(state), legal_action_mask(state)) sharing ONE board analysis.
 

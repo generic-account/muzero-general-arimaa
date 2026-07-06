@@ -28,16 +28,17 @@ BUCKET = "gs://arimaa-tpu-2026-artifacts"
 
 # Scale the game batch with the slice: 1024 games PER CHIP keeps per-shard shapes
 # (and HBM footprint) identical to the validated single-chip run.
-PER_CHIP_GAMES = 1024
+PER_CHIP_GAMES = 512
 N_CHIPS = len(jax.devices())
 
 cfg = Config(
     net=NetConfig(channels=256, blocks=15),
-    mcts=MCTSConfig(num_simulations=32, max_num_considered_actions=16),
+    mcts=MCTSConfig(num_simulations=128, max_num_considered_actions=16),
     selfplay=SelfPlayConfig(
-        batch_size=PER_CHIP_GAMES * N_CHIPS, max_steps=256,
+        batch_size=PER_CHIP_GAMES * N_CHIPS, max_steps=512,
         resign_threshold=0.95,          # conservative early; value head must earn it
-        full_search_prob=0.25, fast_sims=8,
+        full_search_prob=0.25, fast_sims=16,
+        greedy_after_turns=15,          # decisive play after the opening (optima)
     ),
     train=TrainConfig(
         train_batch_size=1024, iterations=ITERS, train_steps_per_iter=16,
@@ -53,7 +54,8 @@ cfg = Config(
     ),
     features=FeaturesConfig(
         bf16=True, fast_search=True, resign=True, playout_cap=True,
-        symmetry_aug=True, arena_gating=True,
+        symmetry_aug=True, arena_gating=True, adjudicate_truncation=True,
+        moves_left_head=True,
         planes_frozen=True, planes_trap=True, planes_step_in_turn=True,
         planes_moved=True,
     ),
