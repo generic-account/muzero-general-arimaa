@@ -45,24 +45,34 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
             return out.action, out.action_weights, out.search_tree.node_values[:, 0]
         return branch
 
-    def body(carry, _):
+    # Playout-cap randomization with a STATIC count: exactly `n_full` of the T
+    # steps use the full-sim search (chosen at random positions); ONLY those steps
+    # are stored for training. The old per-step bernoulli produced ~75% weight-0
+    # buffer rows that diluted every training batch 4x.
+    n_full = max(1, round(full_prob * max_steps)) if playout_cap else max_steps
+    if playout_cap:
+        rng, kperm = jax.random.split(rng)
+        full_steps = jnp.zeros((max_steps,), bool).at[
+            jax.random.permutation(kperm, max_steps)[:n_full]].set(True)
+    else:
+        full_steps = jnp.ones((max_steps,), bool)
+
+    def body(carry, is_full):
         states, rng = carry
         if playout_cap:
-            rng, ks, kr, kc = jax.random.split(rng, 4)
-            is_full = jax.random.bernoulli(kc, full_prob)  # batch-uniform coin
+            rng, ks, kr = jax.random.split(rng, 3)
             action, weights, root_v = jax.lax.cond(
                 is_full, _search(num_sims), _search(fast_sims), (states, ks))
-            weight_step = jnp.where(is_full, 1.0, 0.0)
         else:
-            rng, ks, kr = jax.random.split(rng, 3)  # no extra draw when disabled
+            rng, ks, kr = jax.random.split(rng, 3)
             action, weights, root_v = _search(num_sims)((states, ks))
-            weight_step = 1.0
 
         rec = {
-            "obs": jax.vmap(lambda s: jenv.observe(s, features))(states),
-            "policy_target": weights,
+            # bf16 storage: obs values (0/1 and quarters) and softmax policy targets
+            # are bf16-exact/safe; halves the two largest scan/replay tensors.
+            "obs": jax.vmap(lambda s: jenv.observe(s, features))(states).astype(jnp.bfloat16),
+            "policy_target": weights.astype(jnp.bfloat16),
             "player": states.player,
-            "weight": jnp.full((batch,), weight_step, jnp.float32),
         }
         nstates = jax.vmap(jenv.step)(states, action)
         if resign:
@@ -79,7 +89,7 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         nstates = jenv.where_state(nstates.terminated, fresh, nstates)  # auto-reset
         return (nstates, rng), rec
 
-    (final_states, _), recs = jax.lax.scan(body, (states, rng), None, length=max_steps)
+    (final_states, _), recs = jax.lax.scan(body, (states, rng), full_steps)
 
     # Bootstrap value for truncated tails: net value at the final rolled-to states.
     fobs = jax.vmap(lambda s: jenv.observe(s, features))(final_states)
@@ -120,7 +130,6 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         "obs": recs["obs"],
         "policy_target": recs["policy_target"],
         "value_target": value_target,
-        "weight": recs["weight"],
     }
     if features is not None and features.moves_left_head:
         out["moves_left_target"] = moves_left_target
@@ -131,7 +140,10 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         out["mtp_value_target"] = jnp.concatenate([value_target[1:], value_target[-1:]], 0)
         not_last = (jnp.arange(T) < T - 1)[:, None]
         out["mtp_mask"] = (not_last & (~recs["term"])).astype(jnp.float32)
-    return out
+    # Keep only the full-search timesteps (static count n_full): fast-move rows
+    # were weight-0 filler. jnp.nonzero with static size keeps shapes fixed.
+    idx = jnp.nonzero(full_steps, size=n_full)[0]
+    return {k: v[idx] for k, v in out.items()}
 
 
 def make_generate(mesh, model, batch_size, max_steps, mcts, features=None,

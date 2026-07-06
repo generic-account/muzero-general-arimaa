@@ -77,7 +77,8 @@ def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0)):
     obs = batch["obs"]
     logits, value, aux = jax.vmap(lambda o: apply_fn(params, o))(obs)
     logp = jax.nn.log_softmax(logits, axis=-1)
-    policy_loss = -jnp.sum(batch["policy_target"] * logp, axis=-1)
+    # targets may be stored bf16 in the replay buffer; accumulate the CE in f32
+    policy_loss = -jnp.sum(batch["policy_target"].astype(jnp.float32) * logp, axis=-1)
     value_loss = (value - batch["value_target"]) ** 2
     # Per-sample weights (playout-cap: fast moves have weight 0). Default weight 1 =>
     # weighted mean is the plain mean, so baseline behavior is unchanged.
