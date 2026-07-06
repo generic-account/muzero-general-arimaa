@@ -18,15 +18,47 @@ to 4 — while building the *same tree* (up to floating-point summation order
 within a round) and therefore preserving Gumbel's policy-improvement guarantee
 and mctx's training targets.
 
+v2 additionally collapses the *tree ops* within a round from K-sequential to
+wave-parallel (v1 batched only the recurrent_fn call):
+
+  * descent: read-only on the round's tree snapshot, so all K lanes descend
+    with one nested-vmap `[K, B]` lockstep while_loop instead of K calls;
+  * node writes: the K new nodes and the K (parent, action) edges are distinct
+    on-schedule, so the K per-array scatters fuse into ONE `[B*K]`-wide scatter
+    per tree array (mirroring mctx's `update_tree_node` + `expand` tail);
+  * backups: the K leaf->root paths are disjoint except at the root. One
+    lockstep `[B, K]` scan walks all lanes up at once, recording per hop the
+    (parent, action, propagated leaf_value, updated child value); non-root
+    stats are then written with disjoint scatters, visit counts with
+    scatter-adds, and the root value with the associative closed form
+    v_new = (v*n + sum_k leaf_k) / (n + K) — mathematically identical to
+    mctx's K sequential incremental means (fp summation order differs at the
+    root only; root selection reads raw_values/children stats, not
+    node_values, so visit counts still match mctx exactly).
+
 `batched_gumbel_muzero_policy` below mirrors the `mctx.gumbel_muzero_policy`
 signature and returns a real `mctx.PolicyOutput` over a real `mctx` tree; it
 depends only on jax + mctx internals (no project code), so it can be upstreamed.
 
-Known divergence from mctx (documented, tested): mctx shrinks the halving
-schedule per batch row when a row has fewer than `max_num_considered_actions`
-valid actions. Rounds here are static-width; rows with fewer valid actions
-re-visit their best valid action for the surplus slots (mctx itself re-expands
-nodes at max_depth similarly). This only affects rows near terminal states.
+Known divergences from mctx (documented, tested — both are properties of the
+per-ROUND regrouping present since v1, not of the v2 op batching):
+
+  1. mctx shrinks the halving schedule per batch row when a row has fewer than
+     `max_num_considered_actions` valid actions. Rounds here are static-width;
+     rows with fewer valid actions re-visit their best valid action for the
+     surplus slots (mctx itself re-expands nodes at max_depth similarly).
+     This only affects rows near terminal states.
+  2. mctx recomputes the root completed-Q transform after EVERY simulation, so
+     within a halving round (2w candidates at the considered visit level, only
+     w visits) the transform's global terms (visit_scale via max visits,
+     rescale min/max, mixed value) drift between picks and mctx's sequential
+     argmax can select a different w-subset than the round-start top-w used
+     here. The visited SET can then differ on near-tied candidates (likelier
+     for untrained networks whose Q-values are nearly equal). Rounds that
+     visit ALL candidates at the level (extra-visit rounds, and round 0 where
+     all candidates share the mixed completed value) are order-independent and
+     exact. With a drift-free qtransform (e.g. value_scale=0) the whole search
+     matches mctx's visit counts exactly — see tests_fast_search_v2.py.
 """
 
 import functools
@@ -70,23 +102,124 @@ def _mask_invalid_actions(logits, invalid_actions):
     return jnp.where(invalid_actions, min_logit, logits)
 
 
-def _write_node(tree, parent_index, action, next_node_index, prior_logits,
-                value, reward, discount, embedding):
-    """The tail of mctx.search.expand: write an evaluated node + edge stats."""
-    batch_range = jnp.arange(parent_index.shape[0])
-    tree = mctx_search.update_tree_node(
-        tree, next_node_index, prior_logits, value, embedding)
-    batch_update = mctx_search.batch_update
+def _write_nodes_batched(tree, batch_f, parent_f, action_f, next_f,
+                         prior_logits_f, value_f, reward_f, discount_f,
+                         embedding_f):
+    """The tail of mctx.search.expand + update_tree_node, for a whole round.
+
+    All arguments are flat `[B*K]` (b-major); the K new node indices per row
+    are distinct and the K (parent, action) edges per row are distinct
+    on-schedule, so each of mctx's K sequential per-array scatters collapses
+    into one K-wide scatter. `node_visits` uses `.add` (identical to mctx's
+    read-modify-write `set(old+1)` for distinct indices, and correct for the
+    documented off-schedule duplicate re-expansions where `set` would race).
+    """
     return tree.replace(
-        children_index=batch_update(
-            tree.children_index, next_node_index, parent_index, action),
-        children_rewards=batch_update(
-            tree.children_rewards, reward, parent_index, action),
-        children_discounts=batch_update(
-            tree.children_discounts, discount, parent_index, action),
-        parents=batch_update(tree.parents, parent_index, next_node_index),
-        action_from_parent=batch_update(
-            tree.action_from_parent, action, next_node_index),
+        # update_tree_node fields (at the new nodes).
+        children_prior_logits=tree.children_prior_logits.at[
+            batch_f, next_f].set(prior_logits_f),
+        raw_values=tree.raw_values.at[batch_f, next_f].set(value_f),
+        node_values=tree.node_values.at[batch_f, next_f].set(value_f),
+        node_visits=tree.node_visits.at[batch_f, next_f].add(1),
+        embeddings=jax.tree_util.tree_map(
+            lambda t, s: t.at[batch_f, next_f].set(s),
+            tree.embeddings, embedding_f),
+        # expand tail fields (at the (parent, action) edges / new nodes).
+        children_index=tree.children_index.at[
+            batch_f, parent_f, action_f].set(next_f),
+        children_rewards=tree.children_rewards.at[
+            batch_f, parent_f, action_f].set(reward_f),
+        children_discounts=tree.children_discounts.at[
+            batch_f, parent_f, action_f].set(discount_f),
+        parents=tree.parents.at[batch_f, next_f].set(parent_f),
+        action_from_parent=tree.action_from_parent.at[
+            batch_f, next_f].set(action_f),
+    )
+
+
+def _backward_batched(tree, leaf_indices, num_hops):
+    """mctx.search.backward for K leaves per batch row at once.
+
+    Walks all `[B, K]` lanes leaf->root in lockstep for `num_hops` hops
+    (a static bound on the max leaf depth this round), recording per hop the
+    (parent, action, propagated leaf_value, updated child value). The K paths
+    are disjoint except at the root, so:
+
+      * non-root `node_values` and `children_values` follow mctx's exact
+        single-visitor expressions (bitwise identical on-schedule);
+      * visit counts are scatter-adds (exact, integer);
+      * the root value uses the associative closed form
+        (v*n + sum_k leaf_k) / (n + K), equal to mctx's K sequential
+        incremental means up to fp summation order.
+
+    Lanes whose paths are shorter than `num_hops` are masked by routing their
+    scatter indices out of bounds (`mode="drop"`).
+    """
+    batch_size, num_lanes = leaf_indices.shape
+    num_nodes = tree.node_values.shape[1]
+    b_idx = jnp.arange(batch_size)[:, None]  # [B, 1], broadcasts over K
+
+    node_values = tree.node_values
+    node_visits = tree.node_visits
+
+    def hop(carry, _):
+        index, leaf_value, child_value, active = carry  # each [B, K]
+        parent = tree.parents[b_idx, index]
+        action = tree.action_from_parent[b_idx, index]
+        reward = tree.children_rewards[b_idx, parent, action]
+        discount = tree.children_discounts[b_idx, parent, action]
+        leaf_value = reward + discount * leaf_value
+        is_root = parent == Tree.ROOT_INDEX
+        record = (parent, action, leaf_value, child_value, active)
+        # The parent's updated value: only this lane touches a non-root parent,
+        # so this matches mctx's (v*count + leaf_value) / (count + 1) exactly.
+        # It becomes the NEXT hop's children_values write (mctx writes
+        # tree.node_values[index] *after* the previous hop updated it).
+        count = node_visits[b_idx, parent]
+        parent_value = (node_values[b_idx, parent] * count + leaf_value) / (
+            count + 1.0)
+        carry = (parent, leaf_value, parent_value,
+                 jnp.logical_and(active, ~is_root))
+        return carry, record
+
+    init = (
+        leaf_indices,
+        node_values[b_idx, leaf_indices],  # backward starts from the leaf value
+        node_values[b_idx, leaf_indices],  # first children_values write
+        jnp.ones(leaf_indices.shape, dtype=bool),
+    )
+    _, (parent_h, action_h, leaf_h, child_h, active_h) = jax.lax.scan(
+        hop, init, None, length=num_hops)  # each [H, B, K]
+
+    # Flatten hops x lanes; mask by sending dropped entries out of bounds
+    # (masked parents can be NO_PARENT == -1, which would WRAP, so this is
+    # required for correctness, not just hygiene).
+    mask = active_h.reshape(-1)
+    par = jnp.where(mask, parent_h.reshape(-1), num_nodes)
+    act = action_h.reshape(-1)
+    bat = jnp.broadcast_to(b_idx[None, :, :], active_h.shape).reshape(-1)
+    leaf_v = leaf_h.reshape(-1)
+    child_v = child_h.reshape(-1)
+    one = jnp.ones((), dtype=tree.children_visits.dtype)
+
+    # Per-node visit increments and leaf_value sums (root gets all K lanes,
+    # non-root nodes exactly one on-schedule).
+    cnt = jnp.zeros_like(node_visits).at[bat, par].add(
+        one, mode="drop")
+    leaf_sum = jnp.zeros_like(node_values).at[bat, par].add(
+        leaf_v, mode="drop")
+    new_node_values = jnp.where(
+        cnt > 0,
+        (node_values * node_visits + leaf_sum) / (node_visits + cnt),
+        node_values)
+
+    return tree.replace(
+        node_values=new_node_values,
+        node_visits=node_visits + cnt,
+        children_values=tree.children_values.at[bat, par, act].set(
+            child_v, mode="drop"),
+        children_visits=tree.children_visits.at[bat, par, act].add(
+            one, mode="drop"),
     )
 
 
@@ -94,16 +227,19 @@ def _make_forced_simulate(interior_fn):
     """A vmapped tree-descent like mctx.search.simulate, but the depth-0 (root)
     action is a per-batch input instead of coming from a selection function —
     the round's considered action. Body mirrors mctx._src.search.simulate.
+
+    Doubly vmapped `[K, B]`: descent is read-only on the round's tree snapshot
+    and the K considered subtrees are disjoint below the root (the root action
+    is forced), so all K lanes run one lockstep while_loop over a broadcast
+    tree instead of K sequential descents.
     """
 
-    @functools.partial(jax.vmap, in_axes=[0, 0, 0, None], out_axes=0)
+    @functools.partial(jax.vmap, in_axes=[0, None, 0, None], out_axes=0)  # K
+    @functools.partial(jax.vmap, in_axes=[0, 0, 0, None], out_axes=0)     # B
     def simulate_forced(rng_key, tree, forced_action, max_depth):
         def selection_fn(key, t, node_index, depth):
             interior = interior_fn(key, t, node_index, depth)
             return jnp.where(depth == 0, forced_action, interior).astype(jnp.int32)
-
-        class _State(dict):
-            pass
 
         def cond_fun(state):
             return state["is_continuing"]
@@ -185,7 +321,7 @@ def batched_gumbel_muzero_policy(
     rounds = _rounds_from_schedule(max_num_considered_actions, num_simulations)
 
     sim_offset = 0
-    for considered_visit, width in rounds:
+    for round_index, (considered_visit, width) in enumerate(rounds):
         # --- select this round's considered set (all actions with visits == cv,
         # ranked by gumbel + logits + completed Q; exactly K of them on-schedule).
         summary_visits = tree.children_visits[:, Tree.ROOT_INDEX]
@@ -202,24 +338,26 @@ def batched_gumbel_muzero_policy(
         top_actions = jnp.where(
             selected_invalid, top_actions[:, :1], top_actions)
 
-        # --- descend each considered action's subtree (independent per action).
-        parents, actions, next_idxs = [], [], []
-        for k in range(width):
-            rng_key, simulate_key = jax.random.split(rng_key)
-            simulate_keys = jax.random.split(simulate_key, batch_size)
-            parent_index, action = simulate_forced(
-                simulate_keys, tree, top_actions[:, k], max_depth)
-            next_node_index = tree.children_index[batch_range, parent_index, action]
-            next_node_index = jnp.where(
-                next_node_index == Tree.UNVISITED, sim_offset + k + 1,
-                next_node_index)
-            parents.append(parent_index)
-            actions.append(action)
-            next_idxs.append(next_node_index)
+        # --- descend all K considered subtrees at once (read-only, disjoint
+        # below the root): one lockstep [K, B] while_loop.
+        rng_key, simulate_rng = jax.random.split(rng_key)
+        simulate_keys = jax.random.split(simulate_rng, width * batch_size)
+        simulate_keys = simulate_keys.reshape(
+            (width, batch_size) + simulate_keys.shape[1:])
+        parent_kb, action_kb = simulate_forced(
+            simulate_keys, tree, top_actions.T, max_depth)  # [K, B]
+        parents = parent_kb.T                               # [B, K]
+        actions = action_kb.T
+        next_idxs = tree.children_index[batch_range[:, None], parents, actions]
+        next_idxs = jnp.where(
+            next_idxs == Tree.UNVISITED,
+            sim_offset + jnp.arange(width, dtype=next_idxs.dtype)[None, :] + 1,
+            next_idxs)                                      # [B, K]
 
         # --- ONE batched recurrent_fn call for the whole round: [B * width].
-        parents_f = jnp.stack(parents, axis=1).reshape(-1)        # b-major
-        actions_f = jnp.stack(actions, axis=1).reshape(-1)
+        parents_f = parents.reshape(-1)                     # b-major
+        actions_f = actions.reshape(-1)
+        next_f = next_idxs.reshape(-1)
         batch_f = jnp.repeat(batch_range, width)
         embedding_f = jax.tree_util.tree_map(
             lambda x: x[batch_f, parents_f], tree.embeddings)
@@ -227,20 +365,17 @@ def batched_gumbel_muzero_policy(
         step, new_embedding_f = recurrent_fn(
             params, expand_key, actions_f, embedding_f)
 
-        # --- write the round's nodes + backups (cheap tree ops, no forwards).
-        for k in range(width):
-            step_k_logits = step.prior_logits.reshape(
-                batch_size, width, num_actions)[:, k]
-            step_k_value = step.value.reshape(batch_size, width)[:, k]
-            step_k_reward = step.reward.reshape(batch_size, width)[:, k]
-            step_k_discount = step.discount.reshape(batch_size, width)[:, k]
-            emb_k = jax.tree_util.tree_map(
-                lambda x: x.reshape((batch_size, width) + x.shape[1:])[:, k],
-                new_embedding_f)
-            tree = _write_node(tree, parents[k], actions[k], next_idxs[k],
-                               step_k_logits, step_k_value, step_k_reward,
-                               step_k_discount, emb_k)
-            tree = mctx_search.backward(tree, next_idxs[k])
+        # --- write the round's K nodes with ONE scatter per tree array.
+        tree = _write_nodes_batched(
+            tree, batch_f, parents_f, actions_f, next_f,
+            step.prior_logits, step.value, step.reward, step.discount,
+            new_embedding_f)
+
+        # --- back up all K lanes at once. A leaf expanded in round r is at
+        # depth <= r+1 (each considered subtree gains at most one node per
+        # round), so the lockstep walk needs at most that many hops.
+        num_hops = min(round_index + 1, max_depth)
+        tree = _backward_batched(tree, next_idxs, num_hops)
         sim_offset += width
 
     # --- outputs: verbatim mctx.policies.gumbel_muzero_policy tail.
