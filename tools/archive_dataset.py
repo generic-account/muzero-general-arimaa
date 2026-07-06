@@ -22,7 +22,9 @@ Usage:
 import argparse
 import re
 import os
+import socket
 import sys
+import time
 import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -47,21 +49,35 @@ _DXY = {"n": (0, -1), "s": (0, 1), "e": (1, 0), "w": (-1, 0)}
 _STEP_RE = re.compile(r"[RCDHMErcdhme][a-h][1-8][nsew]")
 
 
-def _fetch_tgz(name, cache_dir):
-    """Download + extract one archive; return the extracted txt path or None."""
+def _fetch_tgz(name, cache_dir, retries=3, timeout=30):
+    """Download + extract one archive; return the extracted txt path or None.
+
+    arimaa.com is intermittently slow, so use a socket timeout + retries and
+    treat any persistent failure (missing file OR network) as 'skip' (return
+    None) rather than crashing the whole corpus run."""
     import tarfile
     txt = os.path.join(cache_dir, f"{name}.txt")
     if os.path.exists(txt):
         return txt
     tgz = os.path.join(cache_dir, f"{name}.tgz")
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(_BASE + f"{name}.tgz", headers=_UA)
+            with urllib.request.urlopen(req, timeout=timeout) as r, open(tgz, "wb") as f:
+                f.write(r.read())
+            break
+        except urllib.error.HTTPError:
+            return None  # file doesn't exist (e.g. yearly name for a monthly-split year)
+        except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError):
+            if attempt == retries - 1:
+                print(f"  [fetch] giving up on {name} after {retries} tries", flush=True)
+                return None
+            time.sleep(3 * (attempt + 1))
     try:
-        req = urllib.request.Request(_BASE + f"{name}.tgz", headers=_UA)
-        with urllib.request.urlopen(req) as r, open(tgz, "wb") as f:
-            f.write(r.read())
-    except urllib.error.HTTPError:
+        with tarfile.open(tgz) as t:
+            t.extractall(cache_dir)
+    except Exception:
         return None
-    with tarfile.open(tgz) as t:
-        t.extractall(cache_dir)
     return txt if os.path.exists(txt) else None
 
 
@@ -278,7 +294,11 @@ def main():
     os.makedirs(args.out, exist_ok=True)
 
     for year in args.years:
-        path = fetch_year(year, args.cache)
+        try:
+            path = fetch_year(year, args.cache)
+        except (FileNotFoundError, OSError) as e:
+            print(f"{year}: fetch failed ({e}); skipping", flush=True)
+            continue
         n_ok = n_skip = n_fail = 0
         cols = shard_io.new_columns()
         with open(path, encoding="utf-8", errors="replace") as f:
