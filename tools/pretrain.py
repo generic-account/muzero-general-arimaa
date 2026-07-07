@@ -48,9 +48,37 @@ def build_features(args):
         moves_left_head=True, symmetry_aug=True)
 
 
+def _eval_val(model, params, feats, val, batch, sharp_w):
+    """Held-out metrics: policy top-1 accuracy (predicts the expert move?),
+    value MSE, and value-output std (grounding). Split by shard/year, so no
+    intra-game leakage into train."""
+    import numpy as _np
+    boards, players, lefts, tstarts = (jnp.asarray(val[k]) for k in
+                                       ("board", "player", "steps_left", "turn_start"))
+    acts = jnp.asarray(val["action"].astype(_np.int32))
+    outcome = jnp.asarray(val["value"]); sharpv = jnp.asarray(val["sharp_value"])
+    N = len(acts); corr = vmse = 0.0; vals = []
+    for s in range(0, N, batch):
+        idx = slice(s, min(s + batch, N))
+        st = jenv.state_from_batch(boards[idx], players[idx], lefts[idx],
+                                   turn_start=tstarts[idx])
+        obs = jax.vmap(lambda s: jenv.observe(s, feats))(st)
+        logits, value, _ = jax.vmap(lambda o: model.apply(params, o))(obs)
+        pred = jnp.argmax(logits, -1)
+        corr += float(jnp.sum(pred == acts[idx]))
+        vt = (1 - sharp_w) * outcome[idx] + sharp_w * sharpv[idx]
+        vmse += float(jnp.sum((value - vt) ** 2))
+        vals.append(_np.asarray(value))
+    vals = _np.concatenate(vals)
+    return corr / N, vmse / N, float(vals.std())
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shards", nargs="+", required=True)
+    ap.add_argument("--val-shards", nargs="+", default=None,
+                    help="held-out shards for validation (e.g. a whole year) — "
+                         "keeps game-correlated positions out of train")
     ap.add_argument("--channels", type=int, default=256)
     ap.add_argument("--blocks", type=int, default=15)
     ap.add_argument("--epochs", type=int, default=3)
@@ -72,6 +100,12 @@ def main():
     N = len(data["action"])
     print(f"loaded {N} samples from {len(files)} shards | "
           f"sharp_value {'PRESENT' if data['_has_sharp'] else 'absent (outcome-only)'}")
+    val = None
+    if args.val_shards:
+        vfiles = [f for p in args.val_shards for f in sorted(glob.glob(p))]
+        val = shard_io.load_shards(vfiles)
+        print(f"validation: {len(val['action'])} samples from {len(vfiles)} shards "
+              f"({vfiles})")
 
     # Build the config once: the optimizer's cosine schedule (create_train_state)
     # needs the total step count up front, so derive it before constructing cfg.
@@ -124,9 +158,15 @@ def main():
                       flush=True)
         checkpoint.save(args.out, state.params,
                         {"config": cfg.to_dict(), "epoch": epoch + 1, "step": step})
-        print(f"[epoch {epoch}] saved -> {args.out}", flush=True)
+        msg = f"[epoch {epoch}] saved -> {args.out}"
+        if val is not None:
+            acc, vmse, vstd = _eval_val(model, state.params, feats, val,
+                                        args.batch, args.sharp_weight)
+            msg += (f" | VAL policy-acc={acc:.3f} value-mse={vmse:.3f} "
+                    f"value-std={vstd:.3f}")
+        print(msg, flush=True)
 
-    # --- value-discrimination diagnostic ---
+    # --- value-discrimination diagnostic (on fresh random-play states) ---
     diag_value_discrimination(model, state.params, feats)
 
 
