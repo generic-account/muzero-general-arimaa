@@ -181,7 +181,8 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             loss = float(last["loss"]) if last else float("nan")
             mfu = f" mfu={m['perf/mfu']*100:.1f}%" if "perf/mfu" in m else ""
             print(f"[iter {it:03d}] games={games_total:>7d} buf={buf.total_size:>7d} "
-                  f"loss={loss:.3f} | {m['throughput/games_per_s']:.1f} games/s "
+                  f"loss={loss:.3f} compl={completed_frac:.2f} T={cur_T} | "
+                  f"{m['throughput/games_per_s']:.1f} games/s "
                   f"{m['throughput/env_steps_per_s']:.0f} env-steps/s "
                   f"{m['perf/achieved_tflops']:.2f} TFLOP/s{mfu} | "
                   f"sp {sp_t:.1f}s tr {tr_t:.1f}s")
