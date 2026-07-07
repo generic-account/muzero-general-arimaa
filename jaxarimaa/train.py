@@ -49,14 +49,15 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     state = distributed.replicate_tree(mesh, state)
 
     # Preemption-safe checkpointing: restore full state (params+opt+step) if present.
-    ckpt_mgr, start_it, anneal_sidecar = None, 0, None
+    ckpt_mgr, start_it, anneal_sidecar, anchor_pkl = None, 0, None, None
     if tc.ckpt_interval:
         ckpt_dir = tc.ckpt_dir or os.path.join(os.path.dirname(out_path) or ".",
                                                "checkpoints")
         ckpt_mgr = checkpointing.CheckpointManager(ckpt_dir, tc.ckpt_interval,
                                                    tc.ckpt_max_keep)
-        if "://" not in str(ckpt_dir):  # remote dirs: no sidecar (stage resets)
+        if "://" not in str(ckpt_dir):  # remote dirs: no sidecars (state resets)
             anneal_sidecar = os.path.join(ckpt_dir, "anneal.json")
+            anchor_pkl = os.path.join(ckpt_dir, "anchor.pkl")
         state, start_it = ckpt_mgr.maybe_restore(state)
         if start_it and verbose:
             print(f"resumed from checkpoint at iteration {start_it}")
@@ -112,18 +113,28 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     # when the learner clearly passes it — producing a chained elo/estimate curve.
     anchor = state.params if feats.arena_gating else None
     anchor_elo = 0.0
+    # The frozen anchor + its chained Elo survive preemption too (anchor.pkl in
+    # the ckpt dir, rewritten at each promotion): without this, resume re-anchors
+    # to the learner itself and a mid-regression preemption gets laundered.
+    if anchor is not None and anchor_pkl and start_it and os.path.exists(anchor_pkl):
+        a_params, a_meta = checkpoint.load(anchor_pkl)
+        anchor = distributed.replicate_tree(mesh, a_params)
+        anchor_elo = float(a_meta.get("elo", 0.0))
+        if verbose:
+            print(f"restored arena anchor (elo {anchor_elo:+.0f}) from {anchor_pkl}")
 
     # Trust ratchet (anneal.TrustRatchet): walk the value-conservative warm-start
-    # knobs toward full AlphaZero, gated on the anchor-Elo. The STAGE survives
-    # preemption via a sidecar JSON next to the Orbax checkpoints (the knobs
-    # persist; the Elo health baseline re-establishes against the fresh anchor).
-    stage0 = 0
+    # knobs toward full AlphaZero, gated on the anchor-Elo. Its FULL state
+    # (stage + health baseline) survives preemption via a sidecar JSON next to
+    # the Orbax checkpoints.
+    side = {}
     if anneal_sidecar and start_it and os.path.exists(anneal_sidecar):
         with open(anneal_sidecar) as f:
-            stage0 = int(json.load(f).get("stage", 0))
-        if stage0 and verbose:
-            print(f"restored anneal stage {stage0} from {anneal_sidecar}")
-    ratchet = anneal.TrustRatchet(tc, stage=stage0)
+            side = json.load(f)
+        if verbose:
+            print(f"restored anneal state {side} from {anneal_sidecar}")
+    ratchet = anneal.TrustRatchet(tc, stage=int(side.get("stage", 0)),
+                                  best=side.get("best"), ema=side.get("ema"))
     value_w, value_tail_w, cur_mix = ratchet.knobs()
 
     # Global per-iteration work (all devices/hosts): games and env-steps generated.
@@ -225,11 +236,13 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
 
         if eval_every and (it + 1) % eval_every == 0:
             key, ke = jax.random.split(key)
+            # Health signal only (saturates near 100% quickly): small and cheap —
+            # at 512 games x 32 sims this was ~7% of self-play compute amortized.
             w, l, u = evaluate.play_vs_random(
                 model, state.params, ke, our_color=0,
-                n_games=min(cfg.selfplay.batch_size, 512),
+                n_games=min(cfg.selfplay.batch_size, 128),
                 max_steps=tc.eval_max_steps or cfg.selfplay.max_steps,
-                num_sims=min(cfg.mcts.num_simulations, 32),  # vs random: 32 plenty
+                num_sims=min(cfg.mcts.num_simulations, 16),
                 max_considered=cfg.mcts.max_num_considered_actions, features=feats,
                 fast=feats.fast_search)
             w, l, u = int(w), int(l), int(u)
@@ -262,6 +275,8 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             if promoted:  # learner clearly past the anchor: re-freeze the chain here
                 anchor = state.params
                 anchor_elo = elo_est
+                if anchor_pkl:  # keep the chain durable across preemptions
+                    checkpoint.save(anchor_pkl, anchor, {"elo": anchor_elo})
             logger.write(it, {"arena/score": score, "arena/decided": wins + losses,
                               "arena/promoted": float(promoted),
                               "elo/estimate": elo_est, "elo/anchor": anchor_elo})
@@ -283,9 +298,10 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
 
         if ckpt_mgr:
             saved = ckpt_mgr.save(it, state)  # periodic; Orbax gates by save-interval
-            if saved and anneal_sidecar:  # persist the ratchet stage in lockstep
+            if saved and anneal_sidecar:  # persist the ratchet state in lockstep
                 with open(anneal_sidecar, "w") as f:
-                    json.dump({"it": it, "stage": ratchet.stage}, f)
+                    json.dump({"it": it, "stage": ratchet.stage,
+                               "best": ratchet.best, "ema": ratchet.ema}, f)
             if (it + 1) % tc.ckpt_interval == 0:
                 # Also refresh the small portable weights pickle so current
                 # strength can be evaluated (e.g. on the AEI ladder) mid-run.

@@ -50,11 +50,32 @@ def test_healthy_climb_reaches_full_without_retreats():
     assert all(b >= a for a, b in zip(stages, stages[1:])), stages  # monotone
 
 
+def test_first_reading_seeds_baseline_no_advance():
+    """Reading #1 on a fresh baseline (best=-inf) must not advance — any Elo
+    beats -inf, so a tanked run's first arena would otherwise peel a stage."""
+    r = TrustRatchet(make_tc())
+    assert not r.update(-500.0) and r.stage == 0
+    # STABILITY at the (tanked) level counts as healthy -> probe upward: the
+    # tank happened at full protection, so protection isn't what's missing.
+    assert r.update(-505.0) and r.stage == 1
+    r2 = TrustRatchet(make_tc())
+    assert not r2.update(500.0) and r2.stage == 0  # even a great reading only seeds
+
+
+def test_restored_baseline_blocks_regression_laundering():
+    """Post-preemption resume restores stage AND best/ema: a learner that
+    regressed just before the preemption must retreat, not advance."""
+    r = TrustRatchet(make_tc(), stage=7, best=200.0, ema=200.0)
+    assert r.knobs()[0] > 0.7  # deep into the anneal
+    r.update(-100.0)  # regressed vs the restored peak
+    assert r.stage == 6, r.stage
+
+
 def test_cliff_retreats_to_zero_and_holds():
     r = TrustRatchet(make_tc())
     for i in range(6):
         r.update(40.0 * i)
-    assert r.stage == 6
+    assert r.stage == 5  # first reading seeded the baseline
     for _ in range(12):
         r.update(-250.0)  # hard, persistent regression (probe-scale collapse)
     assert r.stage == 0
@@ -71,10 +92,10 @@ def test_cliff_retreats_to_zero_and_holds():
 def test_transient_dip_retreats_then_recovers():
     r = TrustRatchet(make_tc())
     for i in range(6):
-        r.update(40.0 * i)  # healthy to stage 6, best ~ ema of climb
-    assert r.stage == 6
-    r.update(-100.0)                     # one bad arena: must back off
+        r.update(40.0 * i)  # healthy climb (first reading seeds)
     assert r.stage == 5
+    r.update(-100.0)                     # one bad arena: must back off
+    assert r.stage == 4
     for i in range(8):
         r.update(220.0 + 10.0 * i)       # recovery past the old level
     assert r.stage == 10

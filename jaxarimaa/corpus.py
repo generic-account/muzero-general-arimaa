@@ -21,7 +21,7 @@ from . import env as jenv
 class CorpusSampler:
     """Host-resident corpus + jitted batch builder (same keys as replay batches)."""
 
-    def __init__(self, pattern, features, sharp_weight=0.5, with_moves_left=True):
+    def __init__(self, pattern, features, sharp_weight=0.5, with_moves_left=None):
         files = sorted(glob.glob(pattern))
         if not files:
             raise FileNotFoundError(f"no corpus shards match {pattern}")
@@ -37,6 +37,10 @@ class CorpusSampler:
         self.data["sharp_value"] = np.concatenate(sharp)
         self.n = len(self.data["action"])
         self.features = features
+        if with_moves_left is None:
+            # Match the replay-batch key set (one train_step graph): emit the
+            # moves-left target exactly when the head that consumes it is on.
+            with_moves_left = bool(features.moves_left_head)
         self.with_moves_left = with_moves_left
         w = float(sharp_weight)
 

@@ -18,11 +18,14 @@ leak keeps it parked at full protection for dozens of rounds.
 
 
 class TrustRatchet:
-    def __init__(self, tc, stage=0):
+    def __init__(self, tc, stage=0, best=float("-inf"), ema=None):
+        # stage/best/ema are restorable (preemption sidecar): losing `best` on
+        # resume would let a mid-regression preemption launder the regression
+        # (fresh -inf baseline reads any Elo as healthy).
         self.tc = tc
         self.stage = min(int(stage), tc.anneal_stages) if tc.anneal_stages else 0
-        self.best = float("-inf")
-        self.ema = None
+        self.best = float("-inf") if best is None else float(best)
+        self.ema = ema
 
     def knobs(self):
         """(value_loss_weight, value_tail_weight, corpus_mix) at the current stage."""
@@ -39,6 +42,13 @@ class TrustRatchet:
         more than backoff below best -> retreat; between -> hold."""
         tc = self.tc
         if not tc.anneal_stages:
+            return False
+        if self.best == float("-inf"):
+            # First reading on a fresh baseline: seed it, decide nothing.
+            # (elo >= -inf would otherwise advance unconditionally — even a
+            # tanked run's first arena would peel off a protection stage.)
+            self.ema = elo
+            self.best = elo
             return False
         prev = self.stage
         if elo >= self.best - tc.anneal_hold_band:

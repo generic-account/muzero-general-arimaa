@@ -97,12 +97,19 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         }
         nstates = jax.vmap(jenv.step)(states, action)
         if resign:
-            adj = jnp.abs(root_v) > resign_thresh
+            # Resign only off FULL-search root values: fast (8-sim) estimates are
+            # noisy and would adjudicate games spuriously, corrupting the stored
+            # full rows' targets upstream of them.
+            adj = is_full & (jnp.abs(root_v) > resign_thresh)
+            belief_adj = adj & (~nstates.terminated)  # real terminal wins
             adj_winner = jnp.where(root_v > 0, states.player,
                                    1 - states.player).astype(jnp.int8)
             nstates = nstates.replace(
                 terminated=nstates.terminated | adj,
-                winner=jnp.where(adj & (~nstates.terminated), adj_winner, nstates.winner))
+                winner=jnp.where(belief_adj, adj_winner, nstates.winner))
+            rec["belief_adj"] = belief_adj
+        else:
+            rec["belief_adj"] = jnp.zeros_like(nstates.terminated)
         rec["term"] = nstates.terminated
         rec["winner"] = nstates.winner
         fresh = jax.vmap(jenv.init_state)(jax.random.split(kr, batch))
@@ -133,7 +140,14 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         sign = jnp.where(player == next_player, 1.0, -1.0)
         v_t = jnp.where(term, outcome, sign * v).astype(jnp.float32)
         ml_t = jnp.where(term, 0.0, jnp.minimum(ml + 1.0, MLCAP))
-        g_t = term | grounded  # real-terminal outcome reached below this row?
+        # Grounded = the value target descends from a REAL terminal. A resign
+        # adjudication (belief_adj) ends the game but its "outcome" is the net's
+        # OWN belief — marking it real would train the value head on itself at
+        # full weight (the self-confirming poison value_tail_weight exists to
+        # stop). It propagates as the target but stays value_real=0. Every
+        # terminal RESETS the carry (games are lane-concatenated; a later game's
+        # real terminal must not ground an earlier game's resign prefix).
+        g_t = jnp.where(term, ~step["belief_adj"], grounded)
         return (player, v_t, ml_t, g_t), (v_t, (ml_t / MLCAP).astype(jnp.float32), g_t)
 
     _, (value_target, moves_left_target, value_real) = jax.lax.scan(
@@ -141,7 +155,8 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         (final_states.player, boot_val.astype(jnp.float32),
          jnp.full(boot_val.shape, MLCAP, jnp.float32),
          jnp.zeros(boot_val.shape, bool)),
-        {"player": recs["player"], "term": recs["term"], "winner": recs["winner"]},
+        {"player": recs["player"], "term": recs["term"], "winner": recs["winner"],
+         "belief_adj": recs["belief_adj"]},
         reverse=True,
     )
     # value_target is the standard MC game-outcome target (terminal -> +/-1,
