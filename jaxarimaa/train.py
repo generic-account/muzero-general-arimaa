@@ -110,6 +110,21 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     anchor = state.params if feats.arena_gating else None
     anchor_elo = 0.0
 
+    # Trust ratchet (see TrainConfig.anneal_*): anneal the value-conservative
+    # warm-start knobs toward full AlphaZero, gated on the anchor-Elo — advance
+    # while healthy, retreat on regression (probe-and-back-off, TCP-style). State
+    # resets on preemption resume, matching the arena chain (conservative restart).
+    anneal_stage, anneal_best = 0, float("-inf")
+
+    def anneal_knobs():
+        t = anneal_stage / tc.anneal_stages if tc.anneal_stages else 0.0
+        lerp = lambda a, b: a + (b - a) * t
+        return (lerp(tc.value_loss_weight, tc.anneal_value_loss_weight),
+                lerp(tc.value_tail_weight, tc.anneal_value_tail_weight),
+                lerp(tc.corpus_mix, tc.anneal_corpus_mix))
+
+    value_w, value_tail_w, cur_mix = anneal_knobs()
+
     # Global per-iteration work (all devices/hosts): games and env-steps generated.
     games_per_iter = cfg.selfplay.batch_size
     samples_per_train = tc.train_batch_size * tc.train_steps_per_iter
@@ -159,15 +174,15 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                     key, ksmp = jax.random.split(key, 2)  # no extra draw when disabled
                     kaug = ksmp  # unused by train_step when symmetry is off
                 if (corpus_sampler is not None
-                        and corpus_rng.random() < tc.corpus_mix):
+                        and corpus_rng.random() < cur_mix):
                     batch = corpus_sampler.sample(corpus_rng, tc.train_batch_size,
                                                   shard_fn=corpus_shard)
                 else:
                     batch = buf.sample(ksmp, tc.train_batch_size)
                 state, last = trainer.train_step(
-                    state, batch, tc.value_loss_weight, kaug, feats.symmetry_aug,
+                    state, batch, value_w, kaug, feats.symmetry_aug,
                     (tc.moves_left_weight, tc.deep_supervision_weight, tc.mtp_weight),
-                    tc.policy_loss_weight, tc.value_tail_weight)
+                    tc.policy_loss_weight, value_tail_w)
             jax.block_until_ready(state.params)
         tr_t = time.time() - t1
         games_total += games_per_iter
@@ -192,6 +207,9 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             m["loss/total"] = float(last["loss"])
             m["loss/policy"] = float(last["policy_loss"])
             m["loss/value"] = float(last["value_loss"])
+            if "value_real_mse" in last:  # undiluted value-head health signal
+                m["loss/value_real_mse"] = float(last["value_real_mse"])
+                m["loss/value_real_frac"] = float(last["value_real_frac"])
         logger.write(it, m)
 
         if verbose:
@@ -249,6 +267,23 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             if verbose:
                 print(f"          arena: score {score:.2f} (W{wins} L{losses} D{draws})"
                       f" -> elo~{elo_est:+.0f}{' [anchor re-frozen]' if promoted else ''}")
+            if tc.anneal_stages:
+                prev = anneal_stage
+                if elo_est >= anneal_best - tc.anneal_hold_band:
+                    anneal_stage = min(anneal_stage + 1, tc.anneal_stages)
+                elif elo_est < anneal_best - tc.anneal_backoff:
+                    anneal_stage = max(anneal_stage - 1, 0)
+                anneal_best = max(anneal_best, elo_est)
+                if anneal_stage != prev:
+                    value_w, value_tail_w, cur_mix = anneal_knobs()
+                    if verbose:
+                        print(f"          [anneal] stage {prev}->{anneal_stage}"
+                              f"/{tc.anneal_stages}: value_w={value_w:.3f} "
+                              f"tail_w={value_tail_w:.3f} corpus_mix={cur_mix:.3f}")
+                logger.write(it, {"anneal/stage": anneal_stage,
+                                  "anneal/value_weight": value_w,
+                                  "anneal/value_tail_weight": value_tail_w,
+                                  "anneal/corpus_mix": cur_mix})
 
         if ckpt_mgr:
             ckpt_mgr.save(it, state)  # periodic; Orbax gates by save-interval

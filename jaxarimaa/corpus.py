@@ -48,7 +48,11 @@ class CorpusSampler:
             obs = jax.vmap(lambda s: jenv.observe(s, features))(st).astype(jnp.bfloat16)
             pol = jax.nn.one_hot(action, C.N_ACTIONS, dtype=jnp.bfloat16)
             vt = (1.0 - w) * value + w * sharpv
-            out = {"obs": obs, "policy_target": pol, "value_target": vt}
+            # value_real=1: corpus rows are real (finished) archive-game outcomes,
+            # never adjudicated tails — full weight in the value loss, and the key
+            # set matches replay batches so train_step keeps one graph.
+            out = {"obs": obs, "policy_target": pol, "value_target": vt,
+                   "value_real": jnp.ones_like(vt)}
             if with_moves_left:
                 out["moves_left_target"] = ml
             return out

@@ -80,11 +80,12 @@ def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0),
     logp = jax.nn.log_softmax(logits, axis=-1)
     # targets may be stored bf16 in the replay buffer; accumulate the CE in f32
     policy_loss = -jnp.sum(batch["policy_target"].astype(jnp.float32) * logp, axis=-1)
-    value_loss = (value - batch["value_target"]) ** 2
+    value_sq = (value - batch["value_target"]) ** 2
+    value_loss = value_sq
     if "value_real" in batch and value_tail_weight != 1.0:
         # bootstrapped/adjudicated tails get down-weighted in the VALUE loss only
         vr = batch["value_real"]
-        value_loss = value_loss * (vr + (1.0 - vr) * value_tail_weight)
+        value_loss = value_sq * (vr + (1.0 - vr) * value_tail_weight)
     # Optional per-sample weights. No current producer emits "weight" (self-play
     # filters fast-move rows out rather than down-weighting), so this defaults to
     # ones => plain mean; kept as a hook (e.g. KataGo-style per-term weighting).
@@ -93,6 +94,14 @@ def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0),
     pol = _weighted_mean(policy_loss, w, wsum)
     val = _weighted_mean(value_loss, w, wsum)
     metrics = {"policy_loss": pol, "value_loss": val}
+    if "value_real" in batch:
+        # `value_loss` above is diluted by masked tail rows (numerator zeroed,
+        # denominator counts all rows) — report the undiluted real-rows-only MSE,
+        # the actual value-head health signal.
+        rw = w * batch["value_real"]
+        rsum = jnp.sum(rw) + 1e-8
+        metrics["value_real_mse"] = jnp.sum(rw * value_sq) / rsum
+        metrics["value_real_frac"] = jnp.sum(rw) / wsum
     total = policy_weight * pol + value_weight * val
 
     if "moves_left" in aux and "moves_left_target" in batch:

@@ -113,6 +113,20 @@ class TrainConfig:
     # toward 0 over the run so the teacher never caps final strength.
     corpus_mix: float = 0.0
     corpus_path: str | None = None  # glob of annotated shards
+    # Adaptive anneal ("trust ratchet", train.py): walk the value-conservative
+    # warm-start knobs (value_loss_weight, value_tail_weight, corpus_mix) from
+    # their configured values toward the anneal_* finals in `anneal_stages` equal
+    # steps, gated on the arena anchor-Elo — advance one stage per arena while the
+    # Elo is within anneal_hold_band of its best, retreat one stage if it drops
+    # more than anneal_backoff below best. 0 stages = fixed knobs. Requires
+    # features.arena_gating (the Elo signal); each stage re-jits train_step
+    # (knobs are static args) — a few seconds, `anneal_stages` times per run.
+    anneal_stages: int = 0
+    anneal_value_loss_weight: float = 1.0   # final value_loss_weight
+    anneal_value_tail_weight: float = 0.25  # final value_tail_weight
+    anneal_corpus_mix: float = 0.0          # final corpus_mix
+    anneal_hold_band: float = 30.0   # Elo below best still counted healthy (~1 sigma @128 games)
+    anneal_backoff: float = 75.0     # Elo drop below best that triggers a retreat (~2.5 sigma)
     seed: int = 0
 
 
