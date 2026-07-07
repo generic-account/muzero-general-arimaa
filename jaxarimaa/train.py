@@ -72,8 +72,24 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         full_prob=cfg.selfplay.full_search_prob,
         fast_sims=cfg.selfplay.fast_sims,
         greedy_after=cfg.selfplay.greedy_after_turns)
-    generate = selfplay.make_generate(mesh, model, cfg.selfplay.batch_size,
-                                      cfg.selfplay.max_steps, mcts, feats, sp_knobs)
+    # Adaptive game length: if tiers are configured, hop between them to keep the
+    # game-completion fraction in a target band as the bot's play-length drifts
+    # (each tier is a separate compile, cached after first use).
+    tiers = list(tc.max_steps_tiers or (cfg.selfplay.max_steps,))
+    if cfg.selfplay.max_steps not in tiers:
+        tiers.append(cfg.selfplay.max_steps)
+    tiers.sort()
+    tier_ix = tiers.index(cfg.selfplay.max_steps)
+    gen_cache = {}
+
+    def get_generate(T):
+        if T not in gen_cache:
+            gen_cache[T] = selfplay.make_generate(mesh, model,
+                                                  cfg.selfplay.batch_size, T,
+                                                  mcts, feats, sp_knobs)
+        return gen_cache[T]
+
+    generate = get_generate(tiers[tier_ix])
     # Arena as an ELO METRIC (not a data gate): self-play ALWAYS uses the learner —
     # gating self-play data on a champion starved the learner of on-policy data when
     # arena samples were noisy (observed in the first long run). Instead we keep a
@@ -85,7 +101,6 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
 
     # Global per-iteration work (all devices/hosts): games and env-steps generated.
     games_per_iter = cfg.selfplay.batch_size
-    env_steps_per_iter = games_per_iter * cfg.selfplay.max_steps
     samples_per_train = tc.train_batch_size * tc.train_steps_per_iter
     games_total = 0
 
@@ -102,9 +117,21 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         # --- self-play (each device plays distinct games; output sharded) ---
         t0 = time.time()
         key, ksp = jax.random.split(key)
-        recs = generate(state.params, ksp)  # always the learner's params
+        recs, completed_frac = generate(state.params, ksp)  # learner's params
         jax.block_until_ready(recs)                # settle async dispatch before timing
         sp_t = time.time() - t0
+        cur_T = tiers[tier_ix]
+        if len(tiers) > 1:  # completion-band controller (hysteresis both ways)
+            if completed_frac < tc.completion_target and tier_ix < len(tiers) - 1:
+                tier_ix += 1
+                print(f"[adapt] completion {completed_frac:.2f} < "
+                      f"{tc.completion_target:.2f}: max_steps {cur_T} -> {tiers[tier_ix]}")
+                generate = get_generate(tiers[tier_ix])
+            elif completed_frac > 0.95 and tier_ix > 0:
+                tier_ix -= 1
+                print(f"[adapt] completion {completed_frac:.2f} > 0.95: "
+                      f"max_steps {cur_T} -> {tiers[tier_ix]}")
+                generate = get_generate(tiers[tier_ix])
         flat = selfplay.flatten_samples(recs)
         buf.add(flat)
         # value-target magnitude: rises toward 1 as games actually finish (health signal)
@@ -129,9 +156,12 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         games_total += games_per_iter
 
         profiler.maybe_stop(it)
+        env_steps_per_iter = games_per_iter * cur_T
         m = {
             "throughput/games_per_s": games_per_iter / max(sp_t, 1e-9),
             "throughput/env_steps_per_s": env_steps_per_iter / max(sp_t, 1e-9),
+            "selfplay/completion": completed_frac,
+            "selfplay/max_steps": cur_T,
             "throughput/train_samples_per_s": (samples_per_train / max(tr_t, 1e-9)) if last else 0.0,
             "throughput/selfplay_s": sp_t,
             "throughput/train_s": tr_t,
@@ -139,7 +169,8 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             "counters/buffer_size": buf.total_size,
             "selfplay/value_target_absmean": vt_absmean,
         }
-        m.update(meter.metrics(sp_t, tr_t, trained=bool(last)))
+        m.update(meter.metrics(sp_t, tr_t, trained=bool(last),
+                               t_scale=cur_T / cfg.selfplay.max_steps))
         if last:
             m["loss/total"] = float(last["loss"])
             m["loss/policy"] = float(last["policy_loss"])

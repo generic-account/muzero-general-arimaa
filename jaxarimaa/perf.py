@@ -73,13 +73,14 @@ class MFUMeter:
         self.n_dev = len(jax.devices())
         self.fwd_flops_selfplay_batch = fwd_sp
 
-    def metrics(self, sp_seconds, tr_seconds, trained: bool):
-        total = self.selfplay_flops + (self.train_flops if trained else 0.0)
+    def metrics(self, sp_seconds, tr_seconds, trained: bool, t_scale: float = 1.0):
+        """t_scale: actual/configured max_steps ratio (adaptive game length)."""
+        total = self.selfplay_flops * t_scale + (self.train_flops if trained else 0.0)
         wall = max(sp_seconds + tr_seconds, 1e-9)
         achieved = total / wall
         m = {
             "perf/achieved_tflops": achieved / 1e12,
-            "perf/selfplay_tflops": self.selfplay_flops / max(sp_seconds, 1e-9) / 1e12,
+            "perf/selfplay_tflops": self.selfplay_flops * t_scale / max(sp_seconds, 1e-9) / 1e12,
         }
         if self.peak:
             m["perf/mfu"] = achieved / (self.peak * self.n_dev)

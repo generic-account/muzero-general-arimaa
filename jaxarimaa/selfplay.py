@@ -165,12 +165,17 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         out["mtp_value_target"] = jnp.concatenate([value_target[1:], value_target[-1:]], 0)
         not_last = (jnp.arange(T) < T - 1)[:, None]
         out["mtp_mask"] = (not_last & (~recs["term"])).astype(jnp.float32)
+    # Completion telemetry: how many games reached a terminal this rollout.
+    # Each lane leaves ~1 unfinished game at scan end, so the fraction of
+    # started games that completed is terminals / (terminals + batch).
+    terminals = jnp.sum(recs["term"].astype(jnp.int32)).reshape(1)
+
     if not playout_cap:
-        return out  # every step is a full-search move; no filtering needed
+        return out, terminals  # every step is a full-search move; no filtering
     # Keep only the full-search timesteps (static count n_full): fast-move rows
     # aren't trained on. jnp.nonzero with static size keeps shapes fixed.
     idx = jnp.nonzero(full_steps, size=n_full)[0]
-    return {k: v[idx] for k, v in out.items()}
+    return {k: v[idx] for k, v in out.items()}, terminals
 
 
 def make_generate(mesh, model, batch_size, max_steps, mcts, features=None,
@@ -190,11 +195,15 @@ def make_generate(mesh, model, batch_size, max_steps, mcts, features=None,
         return _rollout(model, params, r, per, max_steps, mcts, features, sp_knobs)
 
     sharded = jax.shard_map(per_shard, mesh=mesh, in_specs=(P(), P()),
-                            out_specs=P(None, "data"), check_vma=False)
+                            out_specs=(P(None, "data"), P("data")),
+                            check_vma=False)
     jitted = jax.jit(sharded)
 
     def generate(params, rng):
-        return jitted(params, jax.random.fold_in(rng, jax.process_index()))
+        """-> (recs [T,B,...], completed_frac scalar in [0,1])."""
+        recs, terms = jitted(params, jax.random.fold_in(rng, jax.process_index()))
+        n_term = float(jnp.sum(terms))
+        return recs, n_term / (n_term + batch_size)
 
     return generate
 

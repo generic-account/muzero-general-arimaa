@@ -101,6 +101,11 @@ class TrainConfig:
     arena_threshold: float = 0.55   # score at which the anchor re-freezes to the learner
     eval_max_steps: int | None = None  # eval game length (None = selfplay.max_steps);
                                        # set LONGER so eval games actually finish
+    # Adaptive self-play game length: tiers to hop between (each = one cached
+    # compile) keeping game-completion fraction >= completion_target as the
+    # bot's game length drifts. None = fixed selfplay.max_steps.
+    max_steps_tiers: tuple | None = None
+    completion_target: float = 0.80
     seed: int = 0
 
 
