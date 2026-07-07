@@ -61,6 +61,17 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
 
     from .replay import DeviceReplay
     buf = DeviceReplay(mesh, tc.replay_capacity)
+    corpus_sampler, corpus_rng = None, None
+    if tc.corpus_mix > 0 and tc.corpus_path:
+        from . import corpus as corpus_mod
+        import numpy as _np
+        import functools as _ft
+        corpus_sampler = corpus_mod.CorpusSampler(tc.corpus_path, cfg.features)
+        corpus_rng = _np.random.default_rng(tc.seed + 1)
+        corpus_shard = _ft.partial(distributed.shard_batch, mesh)
+        if verbose:
+            print(f"corpus-mix: {tc.corpus_mix:.0%} of train steps from "
+                  f"{corpus_sampler.n:,} expert positions")
     model = trainer.make_model(cfg)
     feats = cfg.features
     active = [k for k, v in vars(feats).items() if v]
@@ -147,7 +158,12 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                 else:
                     key, ksmp = jax.random.split(key, 2)  # no extra draw when disabled
                     kaug = ksmp  # unused by train_step when symmetry is off
-                batch = buf.sample(ksmp, tc.train_batch_size)
+                if (corpus_sampler is not None
+                        and corpus_rng.random() < tc.corpus_mix):
+                    batch = corpus_sampler.sample(corpus_rng, tc.train_batch_size,
+                                                  shard_fn=corpus_shard)
+                else:
+                    batch = buf.sample(ksmp, tc.train_batch_size)
                 state, last = trainer.train_step(
                     state, batch, tc.value_loss_weight, kaug, feats.symmetry_aug,
                     (tc.moves_left_weight, tc.deep_supervision_weight, tc.mtp_weight))

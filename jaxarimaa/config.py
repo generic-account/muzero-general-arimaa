@@ -106,6 +106,11 @@ class TrainConfig:
     # bot's game length drifts. None = fixed selfplay.max_steps.
     max_steps_tiers: tuple | None = None
     completion_target: float = 0.80
+    # Anti-forgetting: fraction of train steps drawn from the expert corpus
+    # (pretraining shards w/ sharp values) instead of self-play replay. Anneal
+    # toward 0 over the run so the teacher never caps final strength.
+    corpus_mix: float = 0.0
+    corpus_path: str | None = None  # glob of annotated shards
     seed: int = 0
 
 
