@@ -82,8 +82,10 @@ def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0),
     policy_loss = -jnp.sum(batch["policy_target"].astype(jnp.float32) * logp, axis=-1)
     value_sq = (value - batch["value_target"]) ** 2
     value_loss = value_sq
-    if "value_real" in batch and value_tail_weight != 1.0:
+    if "value_real" in batch:
         # bootstrapped/adjudicated tails get down-weighted in the VALUE loss only
+        # (identity at value_tail_weight=1; kept traceable so the anneal can move
+        # the weight without recompiling)
         vr = batch["value_real"]
         value_loss = value_sq * (vr + (1.0 - vr) * value_tail_weight)
     # Optional per-sample weights. No current producer emits "weight" (self-play
@@ -141,7 +143,10 @@ def _augment_symmetry(batch, rng):
     return {**batch, "obs": obs, "policy_target": pol}
 
 
-@functools.partial(jax.jit, static_argnums=(2, 4, 5, 6, 7))
+# value/policy/tail weights are TRACED scalars (not static): they're plain
+# multipliers in the loss, and the anneal controller (train.py) moves them
+# mid-run — traced, a weight change costs nothing; static, it would recompile.
+@functools.partial(jax.jit, static_argnums=(4, 5))
 def train_step(state: TrainState, batch, value_weight, rng, symmetry=False,
                aux_weights=(0.0, 0.0, 0.0), policy_weight=1.0,
                value_tail_weight=1.0):

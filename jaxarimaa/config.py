@@ -119,8 +119,8 @@ class TrainConfig:
     # steps, gated on the arena anchor-Elo — advance one stage per arena while the
     # Elo is within anneal_hold_band of its best, retreat one stage if it drops
     # more than anneal_backoff below best. 0 stages = fixed knobs. Requires
-    # features.arena_gating (the Elo signal); each stage re-jits train_step
-    # (knobs are static args) — a few seconds, `anneal_stages` times per run.
+    # features.arena_gating (the Elo signal). Stage changes are FREE: the three
+    # knobs are traced scalars in train_step, so no re-jit on any transition.
     anneal_stages: int = 0
     anneal_value_loss_weight: float = 1.0   # final value_loss_weight
     anneal_value_tail_weight: float = 0.25  # final value_tail_weight
