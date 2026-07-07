@@ -83,6 +83,7 @@ class TrainConfig:
     warmup_steps: int = 200
     grad_clip: float = 1.0
     value_loss_weight: float = 1.0
+    policy_loss_weight: float = 1.0  # 0 = value-only warmup (protect a pretrained policy while value calibrates)
     train_batch_size: int = 1024    # GLOBAL batch (sharded across devices)
     iterations: int = 100           # self-play/train iterations
     train_steps_per_iter: int = 16  # replay-ratio knob (grad steps per self-play round)

@@ -72,7 +72,8 @@ def _weighted_mean(x, w, wsum):
     return jnp.sum(w * x) / wsum
 
 
-def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0)):
+def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0),
+            policy_weight=1.0):
     ml_w, deep_w, mtp_w = aux_weights
     obs = batch["obs"]
     logits, value, aux = jax.vmap(lambda o: apply_fn(params, o))(obs)
@@ -88,7 +89,7 @@ def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0)):
     pol = _weighted_mean(policy_loss, w, wsum)
     val = _weighted_mean(value_loss, w, wsum)
     metrics = {"policy_loss": pol, "value_loss": val}
-    total = pol + value_weight * val
+    total = policy_weight * pol + value_weight * val
 
     if "moves_left" in aux and "moves_left_target" in batch:
         ml = _weighted_mean((aux["moves_left"] - batch["moves_left_target"]) ** 2, w, wsum)
@@ -127,13 +128,14 @@ def _augment_symmetry(batch, rng):
     return {**batch, "obs": obs, "policy_target": pol}
 
 
-@functools.partial(jax.jit, static_argnums=(2, 4, 5))
+@functools.partial(jax.jit, static_argnums=(2, 4, 5, 6))
 def train_step(state: TrainState, batch, value_weight, rng, symmetry=False,
-               aux_weights=(0.0, 0.0, 0.0)):
+               aux_weights=(0.0, 0.0, 0.0), policy_weight=1.0):
     if symmetry:
         batch = _augment_symmetry(batch, rng)
     (loss, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(
-        state.params, state.apply_fn, batch, value_weight, aux_weights
+        state.params, state.apply_fn, batch, value_weight, aux_weights,
+        policy_weight
     )
     state = state.apply_gradients(grads=grads)
     return state, metrics
