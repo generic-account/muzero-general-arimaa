@@ -41,7 +41,7 @@ INIT_PARAMS = None  # e.g. "results/jaxarimaa/pretrained.pkl"
 
 cfg = Config(
     net=NetConfig(channels=256, blocks=15),
-    mcts=MCTSConfig(num_simulations=64, max_num_considered_actions=16),
+    mcts=MCTSConfig(num_simulations=32, max_num_considered_actions=16),
     selfplay=SelfPlayConfig(
         batch_size=PER_CHIP_GAMES * N_CHIPS, max_steps=384,
         resign_threshold=0.90,          # value is pretrained-grounded -> adjudicate sooner
@@ -53,7 +53,7 @@ cfg = Config(
         replay_capacity=262144, warmup_steps=100,
         lr=5e-4,  # warm-start LR: 4x below the random-init 2e-3 — protects the
                   # pretrained weights from early catastrophic forgetting
-        max_steps_tiers=(256, 384, 512), completion_target=0.80,
+        max_steps_tiers=(256, 384, 512), completion_target=0.65,
         ckpt_interval=5, ckpt_max_keep=3,
         # Local Orbax dir: async sharded saves straight to gs:// time out on
         # multi-device meshes (orbax/gcsfs signaling); the stage runner rsyncs
