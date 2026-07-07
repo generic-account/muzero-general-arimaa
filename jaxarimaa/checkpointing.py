@@ -33,8 +33,10 @@ class CheckpointManager:
         return state, step + 1
 
     def save(self, step, state):
-        """Save at `step`; Orbax no-ops unless it's a save-interval step."""
-        self.mngr.save(step, args=ocp.args.StandardSave(state))
+        """Save at `step`; Orbax no-ops unless it's a save-interval step.
+        Returns True if a save was actually initiated (lets callers persist
+        sidecar state, e.g. the anneal stage, in lockstep)."""
+        return self.mngr.save(step, args=ocp.args.StandardSave(state))
 
     def close(self):
         self.mngr.wait_until_finished()

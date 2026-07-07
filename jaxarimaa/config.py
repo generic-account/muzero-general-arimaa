@@ -127,6 +127,9 @@ class TrainConfig:
     anneal_corpus_mix: float = 0.0          # final corpus_mix
     anneal_hold_band: float = 30.0   # Elo below best still counted healthy (~1 sigma @128 games)
     anneal_backoff: float = 75.0     # Elo drop below best that triggers a retreat (~2.5 sigma)
+    anneal_best_leak: float = 5.0    # Elo/round the best-so-far baseline decays: plateaus
+                                     # re-probe eventually instead of parking regressed
+                                     # (small vs backoff, so a real cliff still parks long)
     seed: int = 0
 
 

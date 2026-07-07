@@ -9,6 +9,7 @@ Run a CPU smoke test:
 """
 
 import argparse
+import json
 import math
 import os
 import time
@@ -16,8 +17,8 @@ import time
 import jax
 import jax.numpy as jnp
 
-from . import (checkpoint, checkpointing, distributed, env as jenv, evaluate,
-               metrics, perf, selfplay, trainer)
+from . import (anneal, checkpoint, checkpointing, distributed, env as jenv,
+               evaluate, metrics, perf, selfplay, trainer)
 from .config import Config, tiny_config, tiny_transformer_config
 
 
@@ -48,12 +49,14 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     state = distributed.replicate_tree(mesh, state)
 
     # Preemption-safe checkpointing: restore full state (params+opt+step) if present.
-    ckpt_mgr, start_it = None, 0
+    ckpt_mgr, start_it, anneal_sidecar = None, 0, None
     if tc.ckpt_interval:
         ckpt_dir = tc.ckpt_dir or os.path.join(os.path.dirname(out_path) or ".",
                                                "checkpoints")
         ckpt_mgr = checkpointing.CheckpointManager(ckpt_dir, tc.ckpt_interval,
                                                    tc.ckpt_max_keep)
+        if "://" not in str(ckpt_dir):  # remote dirs: no sidecar (stage resets)
+            anneal_sidecar = os.path.join(ckpt_dir, "anneal.json")
         state, start_it = ckpt_mgr.maybe_restore(state)
         if start_it and verbose:
             print(f"resumed from checkpoint at iteration {start_it}")
@@ -110,20 +113,18 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     anchor = state.params if feats.arena_gating else None
     anchor_elo = 0.0
 
-    # Trust ratchet (see TrainConfig.anneal_*): anneal the value-conservative
-    # warm-start knobs toward full AlphaZero, gated on the anchor-Elo — advance
-    # while healthy, retreat on regression (probe-and-back-off, TCP-style). State
-    # resets on preemption resume, matching the arena chain (conservative restart).
-    anneal_stage, anneal_best = 0, float("-inf")
-
-    def anneal_knobs():
-        t = anneal_stage / tc.anneal_stages if tc.anneal_stages else 0.0
-        lerp = lambda a, b: a + (b - a) * t
-        return (lerp(tc.value_loss_weight, tc.anneal_value_loss_weight),
-                lerp(tc.value_tail_weight, tc.anneal_value_tail_weight),
-                lerp(tc.corpus_mix, tc.anneal_corpus_mix))
-
-    value_w, value_tail_w, cur_mix = anneal_knobs()
+    # Trust ratchet (anneal.TrustRatchet): walk the value-conservative warm-start
+    # knobs toward full AlphaZero, gated on the anchor-Elo. The STAGE survives
+    # preemption via a sidecar JSON next to the Orbax checkpoints (the knobs
+    # persist; the Elo health baseline re-establishes against the fresh anchor).
+    stage0 = 0
+    if anneal_sidecar and start_it and os.path.exists(anneal_sidecar):
+        with open(anneal_sidecar) as f:
+            stage0 = int(json.load(f).get("stage", 0))
+        if stage0 and verbose:
+            print(f"restored anneal stage {stage0} from {anneal_sidecar}")
+    ratchet = anneal.TrustRatchet(tc, stage=stage0)
+    value_w, value_tail_w, cur_mix = ratchet.knobs()
 
     # Global per-iteration work (all devices/hosts): games and env-steps generated.
     games_per_iter = cfg.selfplay.batch_size
@@ -268,25 +269,23 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                 print(f"          arena: score {score:.2f} (W{wins} L{losses} D{draws})"
                       f" -> elo~{elo_est:+.0f}{' [anchor re-frozen]' if promoted else ''}")
             if tc.anneal_stages:
-                prev = anneal_stage
-                if elo_est >= anneal_best - tc.anneal_hold_band:
-                    anneal_stage = min(anneal_stage + 1, tc.anneal_stages)
-                elif elo_est < anneal_best - tc.anneal_backoff:
-                    anneal_stage = max(anneal_stage - 1, 0)
-                anneal_best = max(anneal_best, elo_est)
-                if anneal_stage != prev:
-                    value_w, value_tail_w, cur_mix = anneal_knobs()
+                prev = ratchet.stage
+                if ratchet.update(elo_est):
+                    value_w, value_tail_w, cur_mix = ratchet.knobs()
                     if verbose:
-                        print(f"          [anneal] stage {prev}->{anneal_stage}"
+                        print(f"          [anneal] stage {prev}->{ratchet.stage}"
                               f"/{tc.anneal_stages}: value_w={value_w:.3f} "
                               f"tail_w={value_tail_w:.3f} corpus_mix={cur_mix:.3f}")
-                logger.write(it, {"anneal/stage": anneal_stage,
+                logger.write(it, {"anneal/stage": ratchet.stage,
                                   "anneal/value_weight": value_w,
                                   "anneal/value_tail_weight": value_tail_w,
                                   "anneal/corpus_mix": cur_mix})
 
         if ckpt_mgr:
-            ckpt_mgr.save(it, state)  # periodic; Orbax gates by save-interval
+            saved = ckpt_mgr.save(it, state)  # periodic; Orbax gates by save-interval
+            if saved and anneal_sidecar:  # persist the ratchet stage in lockstep
+                with open(anneal_sidecar, "w") as f:
+                    json.dump({"it": it, "stage": ratchet.stage}, f)
             if (it + 1) % tc.ckpt_interval == 0:
                 # Also refresh the small portable weights pickle so current
                 # strength can be evaluated (e.g. on the AEI ladder) mid-run.
