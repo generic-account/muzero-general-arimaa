@@ -73,7 +73,7 @@ def _weighted_mean(x, w, wsum):
 
 
 def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0),
-            policy_weight=1.0):
+            policy_weight=1.0, value_tail_weight=1.0):
     ml_w, deep_w, mtp_w = aux_weights
     obs = batch["obs"]
     logits, value, aux = jax.vmap(lambda o: apply_fn(params, o))(obs)
@@ -81,6 +81,10 @@ def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0),
     # targets may be stored bf16 in the replay buffer; accumulate the CE in f32
     policy_loss = -jnp.sum(batch["policy_target"].astype(jnp.float32) * logp, axis=-1)
     value_loss = (value - batch["value_target"]) ** 2
+    if "value_real" in batch and value_tail_weight != 1.0:
+        # bootstrapped/adjudicated tails get down-weighted in the VALUE loss only
+        vr = batch["value_real"]
+        value_loss = value_loss * (vr + (1.0 - vr) * value_tail_weight)
     # Optional per-sample weights. No current producer emits "weight" (self-play
     # filters fast-move rows out rather than down-weighting), so this defaults to
     # ones => plain mean; kept as a hook (e.g. KataGo-style per-term weighting).
@@ -128,14 +132,15 @@ def _augment_symmetry(batch, rng):
     return {**batch, "obs": obs, "policy_target": pol}
 
 
-@functools.partial(jax.jit, static_argnums=(2, 4, 5, 6))
+@functools.partial(jax.jit, static_argnums=(2, 4, 5, 6, 7))
 def train_step(state: TrainState, batch, value_weight, rng, symmetry=False,
-               aux_weights=(0.0, 0.0, 0.0), policy_weight=1.0):
+               aux_weights=(0.0, 0.0, 0.0), policy_weight=1.0,
+               value_tail_weight=1.0):
     if symmetry:
         batch = _augment_symmetry(batch, rng)
     (loss, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(
         state.params, state.apply_fn, batch, value_weight, aux_weights,
-        policy_weight
+        policy_weight, value_tail_weight
     )
     state = state.apply_gradients(grads=grads)
     return state, metrics

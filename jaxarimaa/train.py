@@ -167,7 +167,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                 state, last = trainer.train_step(
                     state, batch, tc.value_loss_weight, kaug, feats.symmetry_aug,
                     (tc.moves_left_weight, tc.deep_supervision_weight, tc.mtp_weight),
-                    tc.policy_loss_weight)
+                    tc.policy_loss_weight, tc.value_tail_weight)
             jax.block_until_ready(state.params)
         tr_t = time.time() - t1
         games_total += games_per_iter

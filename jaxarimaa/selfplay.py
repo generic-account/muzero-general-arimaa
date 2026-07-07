@@ -127,18 +127,20 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
     MLCAP = C.MOVES_LEFT_CAP
 
     def back(carry, step):
-        next_player, v, ml = carry
+        next_player, v, ml, grounded = carry
         player, term, winner = step["player"], step["term"], step["winner"]
         outcome = jnp.where(winner == player, 1.0, -1.0)
         sign = jnp.where(player == next_player, 1.0, -1.0)
         v_t = jnp.where(term, outcome, sign * v).astype(jnp.float32)
         ml_t = jnp.where(term, 0.0, jnp.minimum(ml + 1.0, MLCAP))
-        return (player, v_t, ml_t), (v_t, (ml_t / MLCAP).astype(jnp.float32))
+        g_t = term | grounded  # real-terminal outcome reached below this row?
+        return (player, v_t, ml_t, g_t), (v_t, (ml_t / MLCAP).astype(jnp.float32), g_t)
 
-    _, (value_target, moves_left_target) = jax.lax.scan(
+    _, (value_target, moves_left_target, value_real) = jax.lax.scan(
         back,
         (final_states.player, boot_val.astype(jnp.float32),
-         jnp.full(boot_val.shape, MLCAP, jnp.float32)),
+         jnp.full(boot_val.shape, MLCAP, jnp.float32),
+         jnp.zeros(boot_val.shape, bool)),
         {"player": recs["player"], "term": recs["term"], "winner": recs["winner"]},
         reverse=True,
     )
@@ -155,6 +157,10 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         "obs": recs["obs"],
         "policy_target": recs["policy_target"],
         "value_target": value_target,
+        # 1.0 = value target descends from a REAL terminal; 0.0 = bootstrapped/
+        # adjudicated tail. trainer scales the VALUE loss by this (see
+        # value_tail_weight) — crude tail targets churned the trunk (probe).
+        "value_real": value_real.astype(jnp.float32),
     }
     if features is not None and features.moves_left_head:
         out["moves_left_target"] = moves_left_target
