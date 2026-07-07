@@ -89,6 +89,8 @@ def main():
     ap.add_argument("--value-weight", type=float, default=1.0,
                     help="value-loss weight relative to policy CE")
     ap.add_argument("--bf16", action="store_true", default=True)
+    ap.add_argument("--init-params", default=None,
+                    help="warm-start/resume from a saved params pkl")
     ap.add_argument("--out", default="results/jaxarimaa/pretrained.pkl")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -118,27 +120,38 @@ def main():
     feats = cfg.features
     key = jax.random.PRNGKey(args.seed)
     key, kinit = jax.random.split(key)
+    from jaxarimaa import distributed
+    mesh = distributed.make_mesh()          # 1-D data-parallel over all chips
+    ndev = mesh.shape["data"]
+    if args.batch % ndev:
+        raise SystemExit(f"--batch {args.batch} must divide #chips {ndev}")
     state = trainer.create_train_state(cfg, kinit)
+    if args.init_params:                    # warm-start / resume from a saved pkl
+        pre, _ = checkpoint.load(args.init_params)
+        state = state.replace(params=pre)
+        print(f"warm-started from {args.init_params}", flush=True)
+    state = distributed.replicate_tree(mesh, state)   # params/opt replicated
     model = trainer.make_model(cfg)
+    print(f"data-parallel over {ndev} chip(s), global batch {args.batch}", flush=True)
 
-    boards = jnp.asarray(data["board"]); players = jnp.asarray(data["player"])
-    lefts = jnp.asarray(data["steps_left"]); tstarts = jnp.asarray(data["turn_start"])
-    actions = jnp.asarray(data["action"].astype(np.int32))
-    outcome = jnp.asarray(data["value"])
-    sharpv = jnp.asarray(data["sharp_value"])
-    ml = jnp.asarray(np.minimum(data["moves_left"], MLCAP).astype(np.float32) / MLCAP)
+    # Raw dataset stays on HOST (numpy); each step gathers a batch, shards its
+    # leading axis across the mesh, and builds obs in a jitted (auto-parallel)
+    # fn. Host->device transfer per batch is tiny (int8 boards).
+    boards, players = data["board"], data["player"]
+    lefts, tstarts = data["steps_left"], data["turn_start"]
+    actions = data["action"].astype(np.int32)
+    outcome, sharpv = data["value"], data["sharp_value"]
+    ml = (np.minimum(data["moves_left"], MLCAP).astype(np.float32) / MLCAP)
 
-    @jax.jit  # fuse the gather + obs-build + one-hot per step (offline speed)
-    def make_batch(idx):
-        st = jenv.state_from_batch(boards[idx], players[idx], lefts[idx],
-                                   turn_start=tstarts[idx])
-        obs = jax.vmap(lambda s: jenv.observe(s, feats))(st)  # vmap over batched State
-        pol = jax.nn.one_hot(actions[idx], C.N_ACTIONS, dtype=jnp.float32)
-        vt = (1.0 - args.sharp_weight) * outcome[idx] + args.sharp_weight * sharpv[idx]
-        # value target = (1-w)*game_outcome + w*sharp_winprob; no per-sample weight
-        # (loss_fn defaults missing "weight" to ones — all rows train equally).
+    @jax.jit  # inputs arrive already data-sharded; obs-build parallelizes
+    def make_batch(raw):
+        st = jenv.state_from_batch(raw["board"], raw["player"], raw["steps_left"],
+                                   turn_start=raw["turn_start"])
+        obs = jax.vmap(lambda s: jenv.observe(s, feats))(st)
+        pol = jax.nn.one_hot(raw["action"], C.N_ACTIONS, dtype=jnp.float32)
+        vt = (1.0 - args.sharp_weight) * raw["outcome"] + args.sharp_weight * raw["sharpv"]
         return {"obs": obs, "policy_target": pol, "value_target": vt,
-                "moves_left_target": ml[idx]}
+                "moves_left_target": raw["ml"]}
 
     aux_w = (cfg.train.moves_left_weight, 0.0, 0.0)
     step = 0
@@ -146,9 +159,13 @@ def main():
         key, kperm = jax.random.split(key)
         perm = np.asarray(jax.random.permutation(kperm, N))
         for b in range(steps_per_epoch):
-            idx = jnp.asarray(perm[b * args.batch:(b + 1) * args.batch])
+            sl = perm[b * args.batch:(b + 1) * args.batch]
+            raw = distributed.shard_batch(mesh, {
+                "board": boards[sl], "player": players[sl], "steps_left": lefts[sl],
+                "turn_start": tstarts[sl], "action": actions[sl],
+                "outcome": outcome[sl], "sharpv": sharpv[sl], "ml": ml[sl]})
             key, krng = jax.random.split(key)
-            batch = make_batch(idx)
+            batch = make_batch(raw)
             state, m = trainer.train_step(state, batch, args.value_weight, krng,
                                           feats.symmetry_aug, aux_w)
             step += 1
