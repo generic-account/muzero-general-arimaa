@@ -22,7 +22,8 @@ from .config import Config, tiny_config, tiny_transformer_config
 
 
 def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
-          verbose=True, logdir=None, use_wandb=False, profile_dir=None):
+          verbose=True, logdir=None, use_wandb=False, profile_dir=None,
+          init_params=None):
     tc = cfg.train
     distributed.enable_compilation_cache(tc.compile_cache_dir)  # before any jit
     distributed.init_distributed(tc.multihost)   # no-op single-host
@@ -36,6 +37,14 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     key = jax.random.PRNGKey(tc.seed)
     key, kinit = jax.random.split(key)
     state = trainer.create_train_state(cfg, kinit)
+    # Warm-start from a pretrained (imitation/distillation) checkpoint — the
+    # post-cold-start replacement for random init. Orbax resume (below) still
+    # takes precedence, so a preempted run continues from its own progress.
+    if init_params:
+        pre, _ = checkpoint.load(init_params)
+        state = state.replace(params=pre)
+        if verbose:
+            print(f"warm-started params from {init_params}")
     state = distributed.replicate_tree(mesh, state)
 
     # Preemption-safe checkpointing: restore full state (params+opt+step) if present.
@@ -62,7 +71,6 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         resign_thresh=cfg.selfplay.resign_threshold,
         full_prob=cfg.selfplay.full_search_prob,
         fast_sims=cfg.selfplay.fast_sims,
-        outcome_w=cfg.selfplay.value_target_outcome_weight,
         greedy_after=cfg.selfplay.greedy_after_turns)
     generate = selfplay.make_generate(mesh, model, cfg.selfplay.batch_size,
                                       cfg.selfplay.max_steps, mcts, feats, sp_knobs)

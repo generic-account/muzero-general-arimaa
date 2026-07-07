@@ -31,17 +31,25 @@ BUCKET = "gs://arimaa-tpu-2026-artifacts"
 PER_CHIP_GAMES = 512
 N_CHIPS = len(jax.devices())
 
+# Post-cold-start regime: with a pretrained/grounded value head, deep search is
+# no longer needed to GROUND value (only to improve the policy, which Gumbel does
+# at low sims) — so sims drop 128->64 (~4x less tree-walk, the round-tail win),
+# the value target is pure game-outcome (search-root blend removed), resign is
+# less conservative (value is trustworthy), and the replay ratio rises (healthy
+# targets -> learn more per game). Set INIT_PARAMS to the pretrained checkpoint.
+INIT_PARAMS = None  # e.g. "results/jaxarimaa/pretrained.pkl"
+
 cfg = Config(
     net=NetConfig(channels=256, blocks=15),
-    mcts=MCTSConfig(num_simulations=128, max_num_considered_actions=16),
+    mcts=MCTSConfig(num_simulations=64, max_num_considered_actions=16),
     selfplay=SelfPlayConfig(
-        batch_size=PER_CHIP_GAMES * N_CHIPS, max_steps=512,
-        resign_threshold=0.95,          # conservative early; value head must earn it
-        full_search_prob=0.25, fast_sims=16,
+        batch_size=PER_CHIP_GAMES * N_CHIPS, max_steps=384,
+        resign_threshold=0.90,          # value is pretrained-grounded -> adjudicate sooner
+        full_search_prob=0.25, fast_sims=8,
         greedy_after_turns=15,          # decisive play after the opening (optima)
     ),
     train=TrainConfig(
-        train_batch_size=1024, iterations=ITERS, train_steps_per_iter=16,
+        train_batch_size=1024, iterations=ITERS, train_steps_per_iter=32,
         replay_capacity=262144, warmup_steps=100, lr=2e-3,
         ckpt_interval=5, ckpt_max_keep=3,
         # Local Orbax dir: async sharded saves straight to gs:// time out on
@@ -62,4 +70,4 @@ cfg = Config(
 )
 
 train.train(cfg, out_path=f"results/jaxarimaa/{RUN}.pkl", eval_every=8,
-            logdir=f"results/jaxarimaa/{RUN}_tb")
+            logdir=f"results/jaxarimaa/{RUN}_tb", init_params=INIT_PARAMS)

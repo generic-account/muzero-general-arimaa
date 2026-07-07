@@ -27,7 +27,6 @@ class SPKnobs(typing.NamedTuple):
     resign_thresh: float = 0.9
     full_prob: float = 0.25       # playout-cap: fraction of moves that get full sims
     fast_sims: int = 8            # sims for the cheap (untrained, not stored) moves
-    outcome_w: float = 0.5        # value target = w*outcome + (1-w)*search_root_value
     greedy_after: int = 0         # play argmax after this many completed turns (0 = off)
 
 
@@ -41,7 +40,7 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
     a greedy-after-N-turns switch for decisive play.
     """
     num_sims, max_considered = mcts
-    resign_thresh, full_prob, fast_sims, outcome_w, greedy_after = sp_knobs
+    resign_thresh, full_prob, fast_sims, greedy_after = sp_knobs
     playout_cap = features is not None and features.playout_cap
     resign = features is not None and features.resign
     if features is not None and features.fast_search:
@@ -106,7 +105,6 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
                 winner=jnp.where(adj & (~nstates.terminated), adj_winner, nstates.winner))
         rec["term"] = nstates.terminated
         rec["winner"] = nstates.winner
-        rec["root_v"] = root_v.astype(jnp.float32)
         fresh = jax.vmap(jenv.init_state)(jax.random.split(kr, batch))
         nstates = jenv.where_state(nstates.terminated, fresh, nstates)  # auto-reset
         return (nstates, rng), rec
@@ -144,12 +142,12 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         {"player": recs["player"], "term": recs["term"], "winner": recs["winner"]},
         reverse=True,
     )
-    # Blend the (often truncation-bootstrapped) outcome target with the SEARCH
-    # root value: search values incorporate real lookahead, breaking the
-    # self-confirming value collapse seen when most games truncate. Terminal
-    # steps keep their exact ground-truth outcome.
-    blended = outcome_w * value_target + (1.0 - outcome_w) * recs["root_v"]
-    value_target = jnp.where(recs["term"], value_target, blended)
+    # value_target is the standard MC game-outcome target (terminal -> +/-1,
+    # non-terminal -> outcome from that mover's view, truncated tail -> adjudicated
+    # bootstrap). The old search-root-value blend was a cold-start crutch (pure
+    # outcome collapsed when games never finished); with a pretrained/grounded
+    # value head and games that terminate, ground-truth outcome is the right
+    # target and lets value learn past the teacher.
 
     # Only store aux targets when their head is enabled — otherwise they are dead
     # weight in the replay buffer (HBM). Baseline (heads off) carries neither.
