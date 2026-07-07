@@ -3,6 +3,7 @@
 Kept dependency-light and portable. The AEI inference bridge loads these.
 """
 
+import os
 import pickle
 
 import jax
@@ -10,6 +11,7 @@ import numpy as np
 
 
 def save(path, params, meta: dict):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)  # dir may not exist yet
     obj = {
         "params": jax.tree_util.tree_map(lambda x: np.asarray(x), params),
         "meta": meta,
