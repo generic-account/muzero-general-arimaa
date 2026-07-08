@@ -20,7 +20,7 @@ Success (green light for the big run):
   - no cliff: arena elo vs pretrained anchor >= ~-50 through iter 10
   - stable-to-climbing after; ratchet advancing without a backoff storm
 
-Run on the TPU VM:  PYTHONPATH=. python -u configs/confirm_stable.py <run> [iters]
+Run on the TPU VM:  PYTHONPATH=. python -u configs/confirm_reground.py <run> [iters]
 """
 import sys
 

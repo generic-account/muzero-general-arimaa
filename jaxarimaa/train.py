@@ -140,6 +140,9 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     ratchet = anneal.TrustRatchet(tc, stage=int(side.get("stage", 0)),
                                   best=side.get("best"), ema=side.get("ema"))
     value_w, value_tail_w, cur_mix, kl_w = ratchet.knobs()
+    if "tier_ix" in side:  # adaptive max_steps tier survives preemption too
+        tier_ix = min(int(side["tier_ix"]), len(tiers) - 1)
+        generate = get_generate(tiers[tier_ix])
 
     # Global per-iteration work (all devices/hosts): games and env-steps generated.
     games_per_iter = cfg.selfplay.batch_size
@@ -282,7 +285,9 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                 anchor = state.params
                 anchor_elo = elo_est
                 if anchor_pkl:  # keep the chain durable across preemptions
-                    checkpoint.save(anchor_pkl, anchor, {"elo": anchor_elo})
+                    checkpoint.save(anchor_pkl + ".tmp", anchor,
+                                    {"elo": anchor_elo})
+                    os.replace(anchor_pkl + ".tmp", anchor_pkl)
             logger.write(it, {"arena/score": score, "arena/decided": wins + losses,
                               "arena/promoted": float(promoted),
                               "elo/estimate": elo_est, "elo/anchor": anchor_elo})
@@ -307,9 +312,12 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         if ckpt_mgr:
             saved = ckpt_mgr.save(it, state)  # periodic; Orbax gates by save-interval
             if saved and anneal_sidecar:  # persist the ratchet state in lockstep
-                with open(anneal_sidecar, "w") as f:
-                    json.dump({"it": it, "stage": ratchet.stage,
-                               "best": ratchet.best, "ema": ratchet.ema}, f)
+                tmp = anneal_sidecar + ".tmp"  # atomic: a preemption (or the
+                with open(tmp, "w") as f:      # GCS mirror) must never see a
+                    json.dump({"it": it, "stage": ratchet.stage,   # torn file
+                               "best": ratchet.best, "ema": ratchet.ema,
+                               "tier_ix": tier_ix}, f)
+                os.replace(tmp, anneal_sidecar)
             if (it + 1) % tc.ckpt_interval == 0:
                 # Also refresh the small portable weights pickle so current
                 # strength can be evaluated (e.g. on the AEI ladder) mid-run.
