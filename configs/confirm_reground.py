@@ -43,7 +43,10 @@ cfg = Config(
     train=TrainConfig(
         train_batch_size=1024, iterations=ITERS, train_steps_per_iter=16,
         replay_capacity=1048576, warmup_steps=100, lr=3e-4,
-        eval_max_steps=384, arena_interval=5, arena_games=64,
+        # arena_games=128 (256 games/round): learner and anchor are near-clones
+        # (KL ~0.07), so game outcomes correlate and 128-game rounds were far
+        # noisier than binomial — doubling tightens the slope estimate.
+        eval_max_steps=384, arena_interval=5, arena_games=128,
         arena_threshold=0.55,
         max_steps_tiers=(256, 384, 512), completion_target=0.65,
         value_loss_weight=0.25, value_tail_weight=0.0,

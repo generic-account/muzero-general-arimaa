@@ -33,6 +33,9 @@ if [ ! -d "results/jaxarimaa/${RUN}_ckpt" ]; then
   gsutil -m -q rsync -r "$BUCKET/runs/$RUN/ckpt" "results/jaxarimaa/${RUN}_ckpt" 2>/dev/null || true
 fi
 
+rm -f "$HOME/RUN_DONE_$RUN"   # completion sentinel (janitors wait on THIS, not
+                              # pgrep: the sync subshell shares this script's
+                              # cmdline and once blocked a teardown as a phantom)
 ( while true; do sleep 300; sync_artifacts; done ) &
 SYNC_PID=$!
 trap 'kill $SYNC_PID 2>/dev/null' EXIT
@@ -49,3 +52,5 @@ while true; do
   echo "[supervisor] training died (exit $code); relaunching in 30s (auto-resume)"
   sleep 30
 done
+kill $SYNC_PID 2>/dev/null; wait $SYNC_PID 2>/dev/null
+touch "$HOME/RUN_DONE_$RUN"
