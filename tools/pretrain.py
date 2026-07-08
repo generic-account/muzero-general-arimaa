@@ -93,6 +93,12 @@ def main():
                     help="warm-start/resume from a saved params pkl")
     ap.add_argument("--out", default="results/jaxarimaa/pretrained.pkl")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--policy-weight", type=float, default=1.0,
+                    help="policy CE weight (0 = value/aux-only re-grounding)")
+    ap.add_argument("--freeze-trunk-policy", action="store_true",
+                    help="train ONLY value/aux heads (backbone + policy head "
+                         "frozen) — for re-grounding value on a new position "
+                         "distribution without touching the policy")
     args = ap.parse_args()
 
     files = [f for p in args.shards for f in sorted(glob.glob(p))]
@@ -116,6 +122,7 @@ def main():
                  features=build_features(args),
                  train=TrainConfig(lr=args.lr, warmup_steps=200,
                                    train_batch_size=args.batch, iterations=1,
+                                   freeze_trunk_policy=args.freeze_trunk_policy,
                                    train_steps_per_iter=max(1, args.epochs * steps_per_epoch)))
     feats = cfg.features
     key = jax.random.PRNGKey(args.seed)
@@ -167,7 +174,8 @@ def main():
             key, krng = jax.random.split(key)
             batch = make_batch(raw)
             state, m = trainer.train_step(state, batch, args.value_weight, krng,
-                                          feats.symmetry_aug, aux_w)
+                                          feats.symmetry_aug, aux_w,
+                                          args.policy_weight)
             step += 1
             if step % 100 == 0:
                 print(f"epoch {epoch} step {step}: loss={float(m['loss']):.3f} "
