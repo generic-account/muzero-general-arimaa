@@ -16,12 +16,12 @@ import jax
 
 cfg = Config(
     net=NetConfig(channels=256, blocks=15),
-    mcts=MCTSConfig(num_simulations=64, max_num_considered_actions=16),
-    selfplay=SelfPlayConfig(batch_size=512 * len(jax.devices()), max_steps=384,
+    mcts=MCTSConfig(num_simulations=32, max_num_considered_actions=16),
+    selfplay=SelfPlayConfig(batch_size=512 * len(jax.devices()), max_steps=512,
                             resign_threshold=0.90, full_search_prob=0.25,
                             fast_sims=8, greedy_after_turns=15),
     train=TrainConfig(train_batch_size=1024, iterations=3, train_steps_per_iter=16,
-                      replay_capacity=262144, warmup_steps=8,
+                      replay_capacity=1048576, warmup_steps=8,
                       compile_cache_dir="gs://arimaa-tpu-2026-artifacts/compile-cache"),
     features=FeaturesConfig(bf16=True, fast_search=True, resign=True, playout_cap=True,
                             symmetry_aug=True, adjudicate_truncation=True,
