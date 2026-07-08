@@ -47,7 +47,7 @@ cfg = Config(
         # (KL ~0.07), so game outcomes correlate and 128-game rounds were far
         # noisier than binomial — doubling tightens the slope estimate.
         eval_max_steps=384, arena_interval=5, arena_games=128,
-        arena_threshold=0.55,
+        arena_threshold=0.58, ref_interval=4,
         max_steps_tiers=(256, 384, 512), completion_target=0.65,
         value_loss_weight=0.25, value_tail_weight=0.0,
         # mix sweep: 75:25 is NET POSITIVE (0.527); 50:50 already collapses
