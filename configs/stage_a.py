@@ -64,7 +64,7 @@ cfg = Config(
         # shared trunk were the warm-start poison; policy targets exonerated):
         value_loss_weight=0.25,   # damp trunk churn while value calibrates
         value_tail_weight=0.0,    # REAL outcomes only for the value loss
-        corpus_mix=0.2,           # sharp-anchored batches (proven ~450 Elo shield)
+        corpus_mix=0.75,  # mix sweep: 75:25 is NET POSITIVE (0.527); 50:50 already collapses (0.418)           # sharp-anchored batches (proven ~450 Elo shield)
         corpus_path="results/archive_ds_sharp/year*.npz",
         # Trust ratchet: anneal the three protections above toward full AlphaZero
         # (value_w 0.25->1.0, tail_w 0->0.25, mix 0.2->0) one stage per healthy
@@ -72,7 +72,7 @@ cfg = Config(
         # anneal_stages * arena_interval = 100 iters (of ITERS).
         anneal_stages=10,
         anneal_value_loss_weight=1.0, anneal_value_tail_weight=0.25,
-        anneal_corpus_mix=0.0,
+        anneal_corpus_mix=0.25,  # stay above the measured collapse zone
         ckpt_interval=5, ckpt_max_keep=3,
         # Local Orbax dir: async sharded saves straight to gs:// time out on
         # multi-device meshes (orbax/gcsfs signaling); the stage runner rsyncs
