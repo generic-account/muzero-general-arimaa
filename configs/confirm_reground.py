@@ -50,7 +50,10 @@ cfg = Config(
         arena_threshold=0.55,
         max_steps_tiers=(256, 384, 512), completion_target=0.65,
         value_loss_weight=0.25, value_tail_weight=0.0,
-        corpus_mix=0.75,  # mix sweep: 75:25 is NET POSITIVE (0.527); 50:50 already collapses (0.418) corpus_path="results/archive_ds_sharp/year*.npz",
+        # mix sweep: 75:25 is NET POSITIVE (0.527); 50:50 already collapses
+        # (0.418); the old 0.2 was deep in the damage zone
+        corpus_mix=0.75,
+        corpus_path="results/archive_ds_sharp/year*.npz",
         kl_prior_weight=1.0, anneal_kl_prior_weight=0.0,
         anneal_stages=10,
         anneal_value_loss_weight=1.0, anneal_value_tail_weight=0.25,
