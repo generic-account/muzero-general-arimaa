@@ -88,6 +88,11 @@ class TrainConfig:
     grad_clip: float = 1.0
     value_loss_weight: float = 1.0
     policy_loss_weight: float = 1.0
+    # Trust region: weight of KL(pretrained prior || policy) computed ON the
+    # training batches (needs init_params). Bounds warm-start policy drift at
+    # its source; annealed to anneal_kl_prior_weight by the ratchet.
+    kl_prior_weight: float = 0.0
+    anneal_kl_prior_weight: float = 0.0
     # AlphaGo-style value-calibration phase: train ONLY the value/aux heads on a
     # frozen trunk + frozen policy head (optax.masked). Lets the value head fit
     # the self-play outcome distribution without churning the features the

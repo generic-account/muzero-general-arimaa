@@ -47,6 +47,10 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         if verbose:
             print(f"warm-started params from {init_params}")
     state = distributed.replicate_tree(mesh, state)
+    # Frozen copy of the warm-start params for the KL trust region (stays the
+    # PRETRAINED prior — deliberately not the arena anchor, which re-freezes).
+    # Captured before Orbax resume so it's identical across preemptions.
+    kl_anchor = state.params if (init_params and tc.kl_prior_weight > 0) else None
 
     # Preemption-safe checkpointing: restore full state (params+opt+step) if present.
     ckpt_mgr, start_it, anneal_sidecar, anchor_pkl = None, 0, None, None
@@ -135,7 +139,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             print(f"restored anneal state {side} from {anneal_sidecar}")
     ratchet = anneal.TrustRatchet(tc, stage=int(side.get("stage", 0)),
                                   best=side.get("best"), ema=side.get("ema"))
-    value_w, value_tail_w, cur_mix = ratchet.knobs()
+    value_w, value_tail_w, cur_mix, kl_w = ratchet.knobs()
 
     # Global per-iteration work (all devices/hosts): games and env-steps generated.
     games_per_iter = cfg.selfplay.batch_size
@@ -194,7 +198,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                 state, last = trainer.train_step(
                     state, batch, value_w, kaug, feats.symmetry_aug,
                     (tc.moves_left_weight, tc.deep_supervision_weight, tc.mtp_weight),
-                    tc.policy_loss_weight, value_tail_w)
+                    tc.policy_loss_weight, value_tail_w, kl_anchor, kl_w)
             jax.block_until_ready(state.params)
         tr_t = time.time() - t1
         games_total += games_per_iter
@@ -222,6 +226,8 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             if "value_real_mse" in last:  # undiluted value-head health signal
                 m["loss/value_real_mse"] = float(last["value_real_mse"])
                 m["loss/value_real_frac"] = float(last["value_real_frac"])
+            if "kl_prior" in last:  # drift from the pretrained prior
+                m["loss/kl_prior"] = float(last["kl_prior"])
         logger.write(it, m)
 
         if verbose:
@@ -286,15 +292,17 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             if tc.anneal_stages:
                 prev = ratchet.stage
                 if ratchet.update(elo_est):
-                    value_w, value_tail_w, cur_mix = ratchet.knobs()
+                    value_w, value_tail_w, cur_mix, kl_w = ratchet.knobs()
                     if verbose:
                         print(f"          [anneal] stage {prev}->{ratchet.stage}"
                               f"/{tc.anneal_stages}: value_w={value_w:.3f} "
-                              f"tail_w={value_tail_w:.3f} corpus_mix={cur_mix:.3f}")
+                              f"tail_w={value_tail_w:.3f} corpus_mix={cur_mix:.3f} "
+                              f"kl_w={kl_w:.3f}")
                 logger.write(it, {"anneal/stage": ratchet.stage,
                                   "anneal/value_weight": value_w,
                                   "anneal/value_tail_weight": value_tail_w,
-                                  "anneal/corpus_mix": cur_mix})
+                                  "anneal/corpus_mix": cur_mix,
+                                  "anneal/kl_weight": kl_w})
 
         if ckpt_mgr:
             saved = ckpt_mgr.save(it, state)  # periodic; Orbax gates by save-interval

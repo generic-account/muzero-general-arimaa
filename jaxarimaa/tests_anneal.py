@@ -20,23 +20,24 @@ SIGMA = 30.0  # arena Elo noise at 128 games
 def make_tc(**kw):
     kw.setdefault("anneal_stages", 10)
     return TrainConfig(value_loss_weight=0.25, value_tail_weight=0.0,
-                       corpus_mix=0.2, anneal_value_loss_weight=1.0,
-                       anneal_value_tail_weight=0.25, anneal_corpus_mix=0.0, **kw)
+                       corpus_mix=0.2, kl_prior_weight=1.0,
+                       anneal_value_loss_weight=1.0,
+                       anneal_value_tail_weight=0.25, anneal_corpus_mix=0.0,
+                       anneal_kl_prior_weight=0.0, **kw)
 
 
 def test_knob_endpoints_and_midpoint():
     r = TrustRatchet(make_tc())
-    assert r.knobs() == (0.25, 0.0, 0.2)
+    assert r.knobs() == (0.25, 0.0, 0.2, 1.0)
     r.stage = 5
-    vw, tw, mix = r.knobs()
-    assert np.allclose((vw, tw, mix), (0.625, 0.125, 0.1))
+    assert np.allclose(r.knobs(), (0.625, 0.125, 0.1, 0.5))
     r.stage = 10
-    assert r.knobs() == (1.0, 0.25, 0.0)
+    assert r.knobs() == (1.0, 0.25, 0.0, 0.0)
 
 
 def test_disabled_is_inert():
     r = TrustRatchet(make_tc(anneal_stages=0))
-    assert r.knobs() == (0.25, 0.0, 0.2)
+    assert r.knobs() == (0.25, 0.0, 0.2, 1.0)
     assert not r.update(500.0) and r.stage == 0
 
 

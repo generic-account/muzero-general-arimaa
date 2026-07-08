@@ -88,7 +88,8 @@ def _weighted_mean(x, w, wsum):
 
 
 def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0),
-            policy_weight=1.0, value_tail_weight=1.0):
+            policy_weight=1.0, value_tail_weight=1.0, anchor_params=None,
+            kl_weight=0.0):
     ml_w, deep_w, mtp_w = aux_weights
     obs = batch["obs"]
     logits, value, aux = jax.vmap(lambda o: apply_fn(params, o))(obs)
@@ -120,6 +121,20 @@ def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0),
         metrics["value_real_mse"] = jnp.sum(rw * value_sq) / rsum
         metrics["value_real_frac"] = jnp.sum(rw) / wsum
     total = policy_weight * pol + value_weight * val
+    if anchor_params is not None:
+        # Trust region to the pretrained prior ON THE TRAINING BATCH: bounds
+        # policy drift exactly where gradients act, unlike corpus-mix (which
+        # anchors on archive positions). Live self-play training measured ~10x
+        # more damaging per step than identical static data — this caps the
+        # drift at a knob (annealed to 0 by the ratchet as improvement proves
+        # real, so it cannot cap final strength).
+        a_logits, _, _ = jax.vmap(
+            lambda o: apply_fn(jax.lax.stop_gradient(anchor_params), o))(obs)
+        a_logp = jax.nn.log_softmax(a_logits.astype(jnp.float32), axis=-1)
+        kl = jnp.sum(jnp.exp(a_logp) * (a_logp - logp), axis=-1)
+        klm = _weighted_mean(kl, w, wsum)
+        total = total + kl_weight * klm
+        metrics["kl_prior"] = klm
 
     if "moves_left" in aux and "moves_left_target" in batch:
         ml = _weighted_mean((aux["moves_left"] - batch["moves_left_target"]) ** 2, w, wsum)
@@ -164,12 +179,12 @@ def _augment_symmetry(batch, rng):
 @functools.partial(jax.jit, static_argnums=(4, 5))
 def train_step(state: TrainState, batch, value_weight, rng, symmetry=False,
                aux_weights=(0.0, 0.0, 0.0), policy_weight=1.0,
-               value_tail_weight=1.0):
+               value_tail_weight=1.0, anchor_params=None, kl_weight=0.0):
     if symmetry:
         batch = _augment_symmetry(batch, rng)
     (loss, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(
         state.params, state.apply_fn, batch, value_weight, aux_weights,
-        policy_weight, value_tail_weight
+        policy_weight, value_tail_weight, anchor_params, kl_weight
     )
     state = state.apply_gradients(grads=grads)
     return state, metrics

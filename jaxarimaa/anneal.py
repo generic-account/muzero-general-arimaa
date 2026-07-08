@@ -28,13 +28,15 @@ class TrustRatchet:
         self.ema = ema
 
     def knobs(self):
-        """(value_loss_weight, value_tail_weight, corpus_mix) at the current stage."""
+        """(value_loss_weight, value_tail_weight, corpus_mix, kl_prior_weight)
+        at the current stage."""
         tc = self.tc
         t = self.stage / tc.anneal_stages if tc.anneal_stages else 0.0
         lerp = lambda a, b: a + (b - a) * t
         return (lerp(tc.value_loss_weight, tc.anneal_value_loss_weight),
                 lerp(tc.value_tail_weight, tc.anneal_value_tail_weight),
-                lerp(tc.corpus_mix, tc.anneal_corpus_mix))
+                lerp(tc.corpus_mix, tc.anneal_corpus_mix),
+                lerp(tc.kl_prior_weight, tc.anneal_kl_prior_weight))
 
     def update(self, elo):
         """Feed a new arena Elo reading; returns True if the stage changed
