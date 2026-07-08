@@ -148,9 +148,10 @@ def render_occam_movelist(history, side, movenum, tcmove):
     [("1w", "Ra1 Rb1 ..."), ("1b", "ra8 ..."), ("2w", "Ee2n ...")].
     We then append the bare current turn tag which triggers Occam to move.
     """
+    # NOTE: no tcmove= header here — Occam's do_bot() parses this file as
+    # moves ONLY (a tcmove line silently corrupts the parse -> empty board ->
+    # no move). tcmove goes in a SEPARATE gamestate file (read_gamestate()).
     lines = []
-    if tcmove:
-        lines.append("tcmove=%d" % int(tcmove))
     for tag, mv in history:
         if mv:
             lines.append("%s %s" % (tag, mv))
@@ -245,6 +246,7 @@ class Adapter:
 
     def run_bot(self):
         native_side = self.side_char_native(self.side)
+        spath = None
         with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
             path = f.name
             if self.bot == "faerie":
@@ -257,19 +259,27 @@ class Adapter:
             if self.bot == "faerie":
                 cmd = [self.exe, path]
             else:
-                # Occam: getMove <arg0> <movefile> <tcfile>; uses extra[1].
+                # Occam getMove argv: <posfile> <movefile> <gamestatefile>.
+                # do_bot() parses argv[-2] as moves ONLY; read_gamestate()
+                # scans argv[-1] for tcmove=. They must be SEPARATE files.
+                with tempfile.NamedTemporaryFile("w", suffix=".st",
+                                                 delete=False) as sf:
+                    spath = sf.name
+                    sf.write("tcmove=%d\n" % int(self.tcmove or 60))
                 cmd = [self.exe]
                 if self.depth:
                     cmd += ["-d", str(self.depth)]
-                cmd += [path, path, path]
+                cmd += [path, path, spath]
             proc = subprocess.run(cmd, stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE, timeout=300)
             out = proc.stdout.decode("utf-8", "replace")
         finally:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+            for pth in (path, spath):
+                if pth:
+                    try:
+                        os.unlink(pth)
+                    except OSError:
+                        pass
         # The move is the last non-empty stdout line for both bots.
         move = ""
         for line in out.splitlines():
