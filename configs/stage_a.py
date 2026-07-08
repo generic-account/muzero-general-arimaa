@@ -49,10 +49,16 @@ cfg = Config(
         greedy_after_turns=15,          # decisive play after the opening (optima)
     ),
     train=TrainConfig(
-        train_batch_size=1024, iterations=ITERS, train_steps_per_iter=32,
-        replay_capacity=262144, warmup_steps=100,
-        lr=5e-4,  # warm-start LR: 4x below the random-init 2e-3 — protects the
-                  # pretrained weights from early catastrophic forgetting
+        # Loop-gain control (T512 stream probe + spotcheck50 post-mortem): the
+        # warm-start collapse was mild static drift (~-60 Elo/300 steps from
+        # noisy-Q search targets on deep positions) AMPLIFIED by an unstable
+        # data feedback loop. 262144 rows was exactly ONE iteration of rollout
+        # on v5e-4 (the 4-chip scale-up silently cut buffer depth 4x) -> 1M
+        # rows restores ~4-iter depth; steps 32->16 halves updates per rollout.
+        train_batch_size=1024, iterations=ITERS, train_steps_per_iter=16,
+        replay_capacity=1048576, warmup_steps=100,
+        lr=3e-4,  # warm-start LR, lowered again with the loop-gain fix (static
+                  # policy drift per step scales with LR)
         max_steps_tiers=(256, 384, 512), completion_target=0.65,
         # Value-stream protection (probe-verified: value gradients through the
         # shared trunk were the warm-start poison; policy targets exonerated):
