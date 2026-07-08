@@ -57,7 +57,12 @@ cfg = Config(
         # data feedback loop. 262144 rows was exactly ONE iteration of rollout
         # on v5e-4 (the 4-chip scale-up silently cut buffer depth 4x) -> 1M
         # rows restores ~4-iter depth; steps 32->16 halves updates per rollout.
-        train_batch_size=1024, iterations=ITERS, train_steps_per_iter=16,
+        # steps 16->64: the dose grid cleared up to ~110 iters' dose (flat
+        # 0.43-0.52 across 27x) — 16 was calibrated on the old unprotected
+        # recipe. 64 = 4x data utilization + 4x gradient throughput for ~+1s
+        # on a ~104s iteration. Generation size: launch-time A/B (trace shows
+        # the search scaffolding is dispatch-bound, so lane cuts may not pay).
+        train_batch_size=1024, iterations=ITERS, train_steps_per_iter=64,
         replay_capacity=1048576, warmup_steps=100,
         lr=3e-4,  # warm-start LR, lowered again with the loop-gain fix (static
                   # policy drift per step scales with LR)

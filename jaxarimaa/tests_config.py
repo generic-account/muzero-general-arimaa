@@ -66,7 +66,9 @@ def check(path):
     assert tc.replay_capacity >= 3 * rows_per_iter, \
         (f"{path}: replay {tc.replay_capacity} is <3 iters deep "
          f"({rows_per_iter}/iter at {ndev} chips) — the silent-scaling trap")
-    assert tc.train_steps_per_iter <= 16, f"{path}: replay ratio too hot"
+    # dose grid (2026-07-08): flat 0.43-0.52 through 1728 steps (~110 iters'
+    # dose); 192 keeps a 3x margin below the highest fully-clean point
+    assert tc.train_steps_per_iter <= 192, f"{path}: dose beyond grid-cleared envelope"
 
     # -- preemption safety
     assert tc.ckpt_interval and tc.ckpt_dir and "://" not in tc.ckpt_dir, \
