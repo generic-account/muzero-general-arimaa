@@ -28,7 +28,7 @@ cat > "$CFG" <<EOF
 [global]
 rounds = $ROUNDS
 loglevel = WARN
-timecontrol = 20s/60s/100/0/10m
+timecontrol = ${TC:-60s/300s/100/0/30m}
 bots = candidate $OPP
 
 [candidate]
