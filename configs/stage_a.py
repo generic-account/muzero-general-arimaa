@@ -86,8 +86,13 @@ cfg = Config(
         ckpt_dir=f"results/jaxarimaa/{RUN}_ckpt",
         compile_cache_dir=f"{BUCKET}/compile-cache",
         # 128/color = 256 games: near-clone games correlate, 64-game rounds
-        # were noisier than binomial and the ratchet bands assume sigma~30
-        arena_interval=10, arena_games=128, arena_threshold=0.55,
+        # were noisier than binomial and the ratchet bands assume sigma~30.
+        # threshold 0.58 (~2.6 sigma): cuts false promotions ~25x — the chained
+        # elo/estimate inflates by ~+35 per false promotion and never reverts.
+        # ref_interval=4: every 4th arena also plays the FROZEN reference rung
+        # -> elo/vs_ref, the UNBIASED headline metric for run health.
+        arena_interval=10, arena_games=128, arena_threshold=0.58,
+        ref_interval=4,
         eval_max_steps=384,             # long enough for eval games to finish
     ),
     features=FeaturesConfig(

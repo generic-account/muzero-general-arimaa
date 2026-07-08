@@ -116,6 +116,13 @@ class TrainConfig:
     arena_interval: int = 10        # iters between learner-vs-anchor match rounds
     arena_games: int = 32           # games per color (played both colors)
     arena_threshold: float = 0.55   # score at which the anchor re-freezes to the learner
+    # UNBIASED Elo: every ref_interval arena rounds, also play the learner vs a
+    # FROZEN reference rung (initially the warm-start init) -> elo/vs_ref. No
+    # promotion decision selects on this reading, unlike the chained estimate
+    # (which inflates: promotions select on noise, ~+35 per false promotion,
+    # never revert). When the rung saturates (score > 0.95) a new rung freezes
+    # and the gap is calibrated with a DEDICATED fresh match. 0 = off.
+    ref_interval: int = 0
     eval_max_steps: int | None = None  # eval game length (None = selfplay.max_steps);
                                        # set LONGER so eval games actually finish
     # Adaptive self-play game length: tiers to hop between (each = one cached

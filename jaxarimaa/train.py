@@ -47,10 +47,11 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         if verbose:
             print(f"warm-started params from {init_params}")
     state = distributed.replicate_tree(mesh, state)
-    # Frozen copy of the warm-start params for the KL trust region (stays the
-    # PRETRAINED prior — deliberately not the arena anchor, which re-freezes).
-    # Captured before Orbax resume so it's identical across preemptions.
-    kl_anchor = state.params if (init_params and tc.kl_prior_weight > 0) else None
+    # Frozen copy of the warm-start params, captured BEFORE Orbax resume so it
+    # is identical across preemptions: used for the KL trust region and as the
+    # default Elo reference rung.
+    warm_init = state.params
+    kl_anchor = warm_init if (init_params and tc.kl_prior_weight > 0) else None
 
     # Preemption-safe checkpointing: restore full state (params+opt+step) if present.
     ckpt_mgr, start_it, anneal_sidecar, anchor_pkl = None, 0, None, None
@@ -127,6 +128,21 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         if verbose:
             print(f"restored arena anchor (elo {anchor_elo:+.0f}) from {anchor_pkl}")
 
+    # Fixed reference rung for UNBIASED Elo (see TrainConfig.ref_interval):
+    # measurement decoupled from promotion gating. Survives preemption via
+    # rung.pkl + sidecar fields.
+    rung, rung_elo, arena_rounds = None, 0.0, 0
+    rung_pkl = (os.path.join(ckpt_dir, "rung.pkl")
+                if (anneal_sidecar and tc.ref_interval) else None)
+    if feats.arena_gating and tc.ref_interval:
+        rung = warm_init  # NOT the (possibly Orbax-restored) learner
+        if rung_pkl and start_it and os.path.exists(rung_pkl):
+            r_params, r_meta = checkpoint.load(rung_pkl)
+            rung = distributed.replicate_tree(mesh, r_params)
+            rung_elo = float(r_meta.get("elo", 0.0))
+            if verbose:
+                print(f"restored elo reference rung (elo {rung_elo:+.0f})")
+
     # Trust ratchet (anneal.TrustRatchet): walk the value-conservative warm-start
     # knobs toward full AlphaZero, gated on the anchor-Elo. Its FULL state
     # (stage + health baseline) survives preemption via a sidecar JSON next to
@@ -143,6 +159,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     if "tier_ix" in side:  # adaptive max_steps tier survives preemption too
         tier_ix = min(int(side["tier_ix"]), len(tiers) - 1)
         generate = get_generate(tiers[tier_ix])
+    arena_rounds = int(side.get("arena_rounds", 0))
 
     # Global per-iteration work (all devices/hosts): games and env-steps generated.
     games_per_iter = cfg.selfplay.batch_size
@@ -308,6 +325,50 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                                   "anneal/value_tail_weight": value_tail_w,
                                   "anneal/corpus_mix": cur_mix,
                                   "anneal/kl_weight": kl_w})
+            arena_rounds += 1
+            if rung is not None and arena_rounds % tc.ref_interval == 0:
+                # Unbiased Elo: fresh match vs the frozen rung — nothing gates
+                # on this reading, so it has no promotion-selection bias.
+                key, kr1, kr2 = jax.random.split(key, 3)
+                ra, rb, ru = evaluate.play_match(model, state.params, rung, kr1,
+                                                 0, g, ms, ns, nc, feats,
+                                                 feats.fast_search)
+                ra2, rb2, ru2 = evaluate.play_match(model, rung, state.params,
+                                                    kr2, 0, g, ms, ns, nc,
+                                                    feats, feats.fast_search)
+                rw, rl = int(ra) + int(rb2), int(rb) + int(ra2)
+                rd = int(ru) + int(ru2)
+                rs = (rw + 0.5 * rd) / max(rw + rl + rd, 1)
+                rsc = min(max(rs, 0.01), 0.99)
+                elo_ref = rung_elo + 400.0 * math.log10(rsc / (1.0 - rsc))
+                logger.write(it, {"elo/vs_ref": elo_ref, "arena/ref_score": rs})
+                if verbose:
+                    print(f"          ref: score {rs:.2f} -> elo_ref {elo_ref:+.0f}")
+                if rs > 0.95:
+                    # Rung saturated (Elo resolution dies near 1.0): freeze a
+                    # new rung; calibrate the gap with a DEDICATED fresh match
+                    # (the re-rung decision selected on rs, this sample doesn't).
+                    new_rung = state.params
+                    key, kc1, kc2 = jax.random.split(key, 3)
+                    ca, cb, cu = evaluate.play_match(model, new_rung, rung, kc1,
+                                                     0, g, ms, ns, nc, feats,
+                                                     feats.fast_search)
+                    ca2, cb2, cu2 = evaluate.play_match(model, rung, new_rung,
+                                                        kc2, 0, g, ms, ns, nc,
+                                                        feats, feats.fast_search)
+                    cw, cl = int(ca) + int(cb2), int(cb) + int(ca2)
+                    cd = int(cu) + int(cu2)
+                    cs = min(max((cw + 0.5 * cd) / max(cw + cl + cd, 1),
+                                 0.01), 0.99)
+                    rung_elo += 400.0 * math.log10(cs / (1.0 - cs))
+                    rung = new_rung
+                    if rung_pkl:
+                        checkpoint.save(rung_pkl + ".tmp", rung,
+                                        {"elo": rung_elo})
+                        os.replace(rung_pkl + ".tmp", rung_pkl)
+                    if verbose:
+                        print(f"          [rung] new reference frozen at "
+                              f"elo {rung_elo:+.0f}")
 
         if ckpt_mgr:
             saved = ckpt_mgr.save(it, state)  # periodic; Orbax gates by save-interval
@@ -316,7 +377,8 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                 with open(tmp, "w") as f:      # GCS mirror) must never see a
                     json.dump({"it": it, "stage": ratchet.stage,   # torn file
                                "best": ratchet.best, "ema": ratchet.ema,
-                               "tier_ix": tier_ix}, f)
+                               "tier_ix": tier_ix,
+                               "arena_rounds": arena_rounds}, f)
                 os.replace(tmp, anneal_sidecar)
             if (it + 1) % tc.ckpt_interval == 0:
                 # Also refresh the small portable weights pickle so current
