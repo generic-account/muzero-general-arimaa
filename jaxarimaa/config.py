@@ -25,6 +25,10 @@ class FeaturesConfig:
     arena_gating: bool = False         # run learner-vs-frozen-anchor matches -> chained Elo metric (train.py); NOT a data gate
     resign: bool = False               # adjudicate decided self-play games early (more games/rollout)
     playout_cap: bool = False          # KataGo playout-cap: cheap "fast" moves, train only on "full" moves
+    visit_policy_targets: bool = False  # policy target = root visit counts (optima/AZ style;
+                                        # zero mass on unvisited actions) instead of Gumbel
+                                        # action_weights (which impute Q-reweighted mass for
+                                        # NEVER-visited actions — poison when value is OOD)
     adjudicate_truncation: bool = False  # truncated games: material/advancement adjudication (env.material_eval) instead of net bootstrap
     fast_search: bool = False          # batched sequential halving (wave-parallel Gumbel; see fast_search.py)
     # --- architecture (auxiliary heads) ---
@@ -84,6 +88,12 @@ class TrainConfig:
     grad_clip: float = 1.0
     value_loss_weight: float = 1.0
     policy_loss_weight: float = 1.0
+    # AlphaGo-style value-calibration phase: train ONLY the value/aux heads on a
+    # frozen trunk + frozen policy head (optax.masked). Lets the value head fit
+    # the self-play outcome distribution without churning the features the
+    # pretrained policy depends on (value-only WITH trunk measured 0.27-0.43
+    # arena damage; head-only is the safe variant).
+    freeze_trunk_policy: bool = False
     value_tail_weight: float = 1.0  # weight of bootstrapped/adjudicated rows in the value loss  # 0 = value-only warmup (protect a pretrained policy while value calibrates)
     train_batch_size: int = 1024    # GLOBAL batch (sharded across devices)
     iterations: int = 100           # self-play/train iterations

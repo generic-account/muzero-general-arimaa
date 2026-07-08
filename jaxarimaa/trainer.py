@@ -46,6 +46,21 @@ def make_optimizer(cfg: Config):
                            optax.sgd(schedule, momentum=0.9, nesterov=True))
     else:
         raise ValueError(f"unknown optimizer {name!r}")
+    if tc.freeze_trunk_policy:
+        # Value-calibration phase: zero updates for the backbone and the policy
+        # head (Conv_0/Dense_0 are created first in ArimaaNet._heads, so the
+        # names are stable across feature combos); value/aux heads still train.
+        # NOTE optax.masked would PASS RAW GRADS THROUGH for masked-out leaves
+        # (not freeze them) — multi_transform + set_to_zero is the freezing form.
+        frozen = {"ResNetBackbone_0", "TransformerBackbone_0", "Conv_0", "Dense_0"}
+
+        def _labels(params):
+            return jax.tree_util.tree_map_with_path(
+                lambda path, _: "freeze" if any(getattr(p, "key", None) in frozen
+                                                for p in path) else "train", params)
+
+        base = optax.multi_transform({"train": base,
+                                      "freeze": optax.set_to_zero()}, _labels)
     return optax.chain(optax.clip_by_global_norm(tc.grad_clip), base)
 
 

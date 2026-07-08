@@ -55,7 +55,17 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
             s, k = operand
             out = search_impl.run_search(model, params, k, s, sims, max_considered,
                                          features)
-            return out.action, out.action_weights, out.search_tree.node_values[:, 0]
+            if features is not None and features.visit_policy_targets:
+                # optima/AZ-style target: normalized root visit counts. Unvisited
+                # actions get ZERO mass — no Q-imputation channel, so an OOD
+                # value head can only reorder the visited few, not reweight the
+                # whole prior. (Gumbel action_weights stay in use for greedy
+                # argmax play via `weights` either way.)
+                v = out.search_tree.children_visits[:, 0].astype(jnp.float32)
+                weights = v / jnp.maximum(v.sum(-1, keepdims=True), 1.0)
+            else:
+                weights = out.action_weights
+            return out.action, weights, out.search_tree.node_values[:, 0]
         return branch
 
     # Playout-cap randomization with a STATIC count: exactly `n_full` of the T
