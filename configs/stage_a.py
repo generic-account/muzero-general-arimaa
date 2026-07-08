@@ -5,13 +5,15 @@ fast_search A/B): C256x15 + fast_search is FASTER than the config that already
 demonstrated learning (729 vs 311 env-steps/s) with 4x the capacity, at 23% MFU.
 Stage B (when the eval curve flattens): C512x15 + fast_search (49% MFU).
 
-Run on a TPU VM (usually via infra/run_supervised.sh semantics):
-    PYTHONPATH=. python -u configs/stage_a.py <run-name> [iterations]
+Run on a TPU VM via the supervised stage runner:
+    bash infra/run_stage.sh <run-name> configs/stage_a.py [iterations]
 
-Metrics: stdout + TensorBoard events (tensorboardX on TPU VMs) under
-results/<run>/tb — rsync to GCS and view locally. Learning signals to watch:
-  eval/win_rate (vs random, long games), arena/cand_win_rate (self-improvement),
-  selfplay/value_target_absmean (game decisiveness), loss/policy.
+Metrics: stdout + TensorBoard events under results/<run>_tb (run_stage rsyncs
+to GCS every 5 min). Learning signals to watch:
+  elo/estimate + arena/score (learner vs frozen anchor — THE health metric;
+  eval-vs-random is blind to warm-start damage), anneal/stage (ratchet),
+  loss/value_real_mse (undiluted value-head health), loss/kl_prior (drift
+  from the pretrained prior), selfplay/completion.
 """
 
 import sys
@@ -31,13 +33,13 @@ BUCKET = "gs://arimaa-tpu-2026-artifacts"
 PER_CHIP_GAMES = 512
 N_CHIPS = len(jax.devices())
 
-# Post-cold-start regime: with a pretrained/grounded value head, deep search is
-# no longer needed to GROUND value (only to improve the policy, which Gumbel does
-# at low sims) — so sims drop 128->64 (~4x less tree-walk, the round-tail win),
-# the value target is pure game-outcome (search-root blend removed), resign is
-# less conservative (value is trustworthy), and the replay ratio rises (healthy
-# targets -> learn more per game). Set INIT_PARAMS to the pretrained checkpoint.
-INIT_PARAMS = None  # e.g. "results/jaxarimaa/pretrained.pkl"
+# Post-cold-start regime (n=32 sims: measured identical strength to n=64 at
+# 1.75x the throughput). INIT_PARAMS must be the RE-GROUNDED checkpoint —
+# pretrained policy + value/aux heads re-fit on sharp-annotated SELF-PLAY
+# positions (gs://arimaa-tpu-2026-artifacts/regrounded_c256.pkl). Warm-starting
+# from the plain pretrained pkl re-opens the OOD-value drift the re-grounding
+# closed. The KL trust region anchors to whatever INIT_PARAMS loads.
+INIT_PARAMS = "results/jaxarimaa/regrounded_c256.pkl"
 
 cfg = Config(
     net=NetConfig(channels=256, blocks=15),
@@ -68,10 +70,12 @@ cfg = Config(
         # (0.418); the old 0.2 was deep in the damage zone
         corpus_mix=0.75,
         corpus_path="results/archive_ds_sharp/year*.npz",
-        # Trust ratchet: anneal the three protections above toward full AlphaZero
-        # (value_w 0.25->1.0, tail_w 0->0.25, mix 0.2->0) one stage per healthy
-        # arena round; retreat on an Elo regression. Earliest full anneal:
-        # anneal_stages * arena_interval = 100 iters (of ITERS).
+        # Trust ratchet: anneal the protections toward full AlphaZero
+        # (value_w 0.25->1.0, tail_w 0->0.25, mix 0.75->0.25, kl 1.0->0) one
+        # stage per healthy arena round; retreat on regression. Earliest full
+        # anneal: anneal_stages * arena_interval iters.
+        kl_prior_weight=1.0,       # trust region to the re-grounded prior
+        anneal_kl_prior_weight=0.0,
         anneal_stages=10,
         anneal_value_loss_weight=1.0, anneal_value_tail_weight=0.25,
         anneal_corpus_mix=0.25,  # stay above the measured collapse zone
@@ -81,7 +85,9 @@ cfg = Config(
         # this dir to GCS for durability and pulls it down on fresh VMs.
         ckpt_dir=f"results/jaxarimaa/{RUN}_ckpt",
         compile_cache_dir=f"{BUCKET}/compile-cache",
-        arena_interval=10, arena_games=64, arena_threshold=0.55,
+        # 128/color = 256 games: near-clone games correlate, 64-game rounds
+        # were noisier than binomial and the ratchet bands assume sigma~30
+        arena_interval=10, arena_games=128, arena_threshold=0.55,
         eval_max_steps=384,             # long enough for eval games to finish
     ),
     features=FeaturesConfig(
