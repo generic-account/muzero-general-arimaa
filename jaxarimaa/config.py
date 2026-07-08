@@ -152,6 +152,11 @@ class TrainConfig:
     anneal_best_leak: float = 5.0    # Elo/round the best-so-far baseline decays: plateaus
                                      # re-probe eventually instead of parking regressed
                                      # (small vs backoff, so a real cliff still parks long)
+    # Slow-bleed guard: a decline of ~hold_band per round never trips the
+    # backoff (the leaky best follows it down). Two consecutive rounds scoring
+    # below this floor vs the CURRENT anchor = actively losing to a fixed
+    # opponent -> retreat regardless of the Elo baseline. 0 = off.
+    anneal_score_floor: float = 0.45
     seed: int = 0
 
 

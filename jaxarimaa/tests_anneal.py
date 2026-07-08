@@ -120,6 +120,30 @@ def test_noisy_plateau_drifts_up_not_down():
     assert min(finals) >= 5, finals
 
 
+def test_slow_bleed_guard():
+    """A gentle decline (~hold_band/round) never trips the backoff — the leaky
+    best follows it down and each reading stays 'healthy'. Reproduces the live
+    reground50 bleed (0.50/0.44/0.43/0.39 vs anchor while the ratchet kept
+    advancing). The score floor must hold on the first sub-floor reading and
+    retreat on the second."""
+    r = TrustRatchet(make_tc())
+    for i in range(6):
+        r.update(40.0 * i, score=0.55)   # healthy climb to stage 5
+    assert r.stage == 5
+    st = r.stage
+    assert not r.update(160.0, score=0.44)  # 1st sub-floor: HOLD, not advance
+    assert r.stage == st
+    assert r.update(140.0, score=0.43)       # 2nd consecutive: forced retreat
+    assert r.stage == st - 1
+    r.update(120.0, score=0.42)              # bleed continues: hold...
+    assert r.stage == st - 1
+    r.update(100.0, score=0.40)              # ...retreat again (every 2 rounds)
+    assert r.stage == st - 2
+    # recovery above the floor resumes normal behavior
+    r.update(200.0, score=0.55)
+    assert r.stage == st - 1
+
+
 def test_raw_best_would_fail_plateau():
     """Documents WHY best is EMA-smoothed: with best = max(raw readings), a
     plateau decays toward full protection (the flaw the EMA fixes). If this

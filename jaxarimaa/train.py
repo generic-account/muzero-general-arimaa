@@ -313,7 +313,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                       f" -> elo~{elo_est:+.0f}{' [anchor re-frozen]' if promoted else ''}")
             if tc.anneal_stages:
                 prev = ratchet.stage
-                if ratchet.update(elo_est):
+                if ratchet.update(elo_est, score=score):
                     value_w, value_tail_w, cur_mix, kl_w = ratchet.knobs()
                     if verbose:
                         print(f"          [anneal] stage {prev}->{ratchet.stage}"

@@ -26,6 +26,7 @@ class TrustRatchet:
         self.stage = min(int(stage), tc.anneal_stages) if tc.anneal_stages else 0
         self.best = float("-inf") if best is None else float(best)
         self.ema = ema
+        self.low_scores = 0  # consecutive sub-floor rounds (slow-bleed guard)
 
     def knobs(self):
         """(value_loss_weight, value_tail_weight, corpus_mix, kl_prior_weight)
@@ -38,13 +39,20 @@ class TrustRatchet:
                 lerp(tc.corpus_mix, tc.anneal_corpus_mix),
                 lerp(tc.kl_prior_weight, tc.anneal_kl_prior_weight))
 
-    def update(self, elo):
-        """Feed a new arena Elo reading; returns True if the stage changed
-        (caller should re-read knobs()). Within hold_band of best -> advance;
-        more than backoff below best -> retreat; between -> hold."""
+    def update(self, elo, score=None):
+        """Feed a new arena Elo reading (and optionally the raw score vs the
+        current anchor); returns True if the stage changed (caller should
+        re-read knobs()). Within hold_band of best -> advance; more than
+        backoff below best -> retreat; between -> hold. Slow-bleed guard: a
+        gentle decline (~hold_band/round) never trips the backoff because the
+        leaky best follows it down — two consecutive rounds scoring below
+        anneal_score_floor vs a FIXED anchor force a retreat instead."""
         tc = self.tc
         if not tc.anneal_stages:
             return False
+        low = (score is not None and tc.anneal_score_floor
+               and score < tc.anneal_score_floor)
+        self.low_scores = self.low_scores + 1 if low else 0
         if self.best == float("-inf"):
             # First reading on a fresh baseline: seed it, decide nothing.
             # (elo >= -inf would otherwise advance unconditionally — even a
@@ -53,7 +61,14 @@ class TrustRatchet:
             self.best = elo
             return False
         prev = self.stage
-        if elo >= self.best - tc.anneal_hold_band:
+        if self.low_scores >= 2:
+            # Sustained sub-floor vs a FIXED anchor: retreat every 2 such
+            # rounds while the bleed lasts.
+            self.low_scores = 0
+            self.stage = max(self.stage - 1, 0)
+        elif low:
+            pass  # single sub-floor reading: hold (never advance INTO a bleed)
+        elif elo >= self.best - tc.anneal_hold_band:
             self.stage = min(self.stage + 1, tc.anneal_stages)
         elif elo < self.best - tc.anneal_backoff:
             self.stage = max(self.stage - 1, 0)
