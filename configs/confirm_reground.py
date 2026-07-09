@@ -55,7 +55,7 @@ cfg = Config(
         corpus_mix=0.75,
         corpus_path="results/archive_ds_sharp/year*.npz",
         kl_prior_weight=1.0, anneal_kl_prior_weight=0.0,
-        anneal_stages=10,
+        anneal_stages=40,  # 4x smaller steps; full anneal ~iter 400+ (horizon scaled to run length; stage-1 window coincided with the rehearsal decline)
         anneal_value_loss_weight=1.0, anneal_value_tail_weight=0.25,
         anneal_corpus_mix=0.70,  # FLOOR: live bleed began as mix crossed ~0.65 (matches the static sweep); weaning below this waits for demonstrated self-improvement
         ckpt_interval=5, ckpt_max_keep=3,
