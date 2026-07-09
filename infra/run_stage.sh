@@ -42,6 +42,9 @@ fi
 if [ ! -f "results/jaxarimaa/regrounded_c256.pkl" ]; then
   gsutil -q cp "$BUCKET/regrounded_c256.pkl" "results/jaxarimaa/regrounded_c256.pkl" 2>/dev/null || true
 fi
+if [ ! -f "results/jaxarimaa/regrounded_plus9_c256.pkl" ]; then
+  gsutil -q cp "$BUCKET/regrounded_plus9_c256.pkl" "results/jaxarimaa/regrounded_plus9_c256.pkl" 2>/dev/null || true
+fi
 
 rm -f "$HOME/RUN_DONE_$RUN"   # completion sentinel (janitors wait on THIS, not
                               # pgrep: the sync subshell shares this script's

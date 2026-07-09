@@ -39,7 +39,7 @@ N_CHIPS = len(jax.devices())
 # positions (gs://arimaa-tpu-2026-artifacts/regrounded_c256.pkl). Warm-starting
 # from the plain pretrained pkl re-opens the OOD-value drift the re-grounding
 # closed. The KL trust region anchors to whatever INIT_PARAMS loads.
-INIT_PARAMS = "results/jaxarimaa/regrounded_c256.pkl"
+INIT_PARAMS = "results/jaxarimaa/regrounded_plus9_c256.pkl"  # rehearsal iter-9 anchor: 6-replay-verified +35+-11 over the regrounded init — bank it
 
 cfg = Config(
     net=NetConfig(channels=256, blocks=15),
