@@ -18,7 +18,7 @@ echo "VM: ${STATE:-none}"
 if $GS -q stat "$BUCKET/runs/$RUN/FINISHED" 2>/dev/null; then echo "run: FINISHED"; fi
 if $GS -q stat "$BUCKET/runs/$RUN/RUN_FAILED" 2>/dev/null; then echo "run: FAILED (needs human)"; fi
 
-TMP=$(mktemp /tmp/status_XXXX.log)
+TMP=$(mktemp /tmp/status_XXXXXXXX.log)
 if $GS -q cp "$BUCKET/runs/$RUN/$RUN.log" "$TMP" 2>/dev/null; then
   AGE=$($GS ls -l "$BUCKET/runs/$RUN/$RUN.log" 2>/dev/null | awk '{print $2}' | head -1)
   ITERS=$(grep -c "^\[iter" "$TMP" || true)
@@ -35,6 +35,9 @@ if $GS -q cp "$BUCKET/runs/$RUN/$RUN.log" "$TMP" 2>/dev/null; then
   echo "relaunches: $R | checkpoint resumes: $P"
   grep -E "fast crashes|giving up" "$TMP" | tail -2
 else
-  echo "(no log in GCS yet — run not started or first sync pending)"
+  echo "(no GCS log yet — falling back to direct VM read)"
+  NODE=${NODE:-arimaa-$(echo "$RUN" | tr -d '_')}
+  $GC compute tpus tpu-vm ssh "$NODE" --zone="$ZONE" \
+    --command="grep -E '^\[iter|arena:|ref: score|\[anneal\]|training died' ~/$RUN.log 2>/dev/null | tail -8" 2>/dev/null || echo "(VM unreachable)"
 fi
 rm -f "$TMP"

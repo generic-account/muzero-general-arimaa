@@ -22,6 +22,7 @@ cd "$(dirname "$0")/.."
 sync_artifacts() {
   gsutil -m -q rsync -r "results/jaxarimaa/${RUN}_tb" "$BUCKET/runs/$RUN/tb" || true
   gsutil -q cp "results/jaxarimaa/$RUN.pkl" "$BUCKET/runs/$RUN/model.pkl" 2>/dev/null || true
+  gsutil -q cp "$HOME/$RUN.log" "$BUCKET/runs/$RUN/$RUN.log" 2>/dev/null || true
   # Orbax checkpoints are written locally (multi-device async saves to gs://
   # time out); mirror them to GCS for preemption durability. NO -d and exclude
   # Orbax's atomic-write tmp dirs: a delete-mirroring rsync racing a mid-write
