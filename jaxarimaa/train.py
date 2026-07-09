@@ -121,7 +121,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     # The frozen anchor + its chained Elo survive preemption too (anchor.pkl in
     # the ckpt dir, rewritten at each promotion): without this, resume re-anchors
     # to the learner itself and a mid-regression preemption gets laundered.
-    if anchor is not None and anchor_pkl and start_it and os.path.exists(anchor_pkl):
+    if anchor is not None and anchor_pkl and os.path.exists(anchor_pkl):
         a_params, a_meta = checkpoint.load(anchor_pkl)
         anchor = distributed.replicate_tree(mesh, a_params)
         anchor_elo = float(a_meta.get("elo", 0.0))
@@ -136,7 +136,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                 if (anneal_sidecar and tc.ref_interval) else None)
     if feats.arena_gating and tc.ref_interval:
         rung = warm_init  # NOT the (possibly Orbax-restored) learner
-        if rung_pkl and start_it and os.path.exists(rung_pkl):
+        if rung_pkl and os.path.exists(rung_pkl):
             r_params, r_meta = checkpoint.load(rung_pkl)
             rung = distributed.replicate_tree(mesh, r_params)
             rung_elo = float(r_meta.get("elo", 0.0))
@@ -148,7 +148,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     # (stage + health baseline) survives preemption via a sidecar JSON next to
     # the Orbax checkpoints.
     side = {}
-    if anneal_sidecar and start_it and os.path.exists(anneal_sidecar):
+    if anneal_sidecar and os.path.exists(anneal_sidecar):
         with open(anneal_sidecar) as f:
             side = json.load(f)
         if verbose:

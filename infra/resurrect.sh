@@ -69,6 +69,7 @@ mkdir -p results/archive_ds_sharp results/jaxarimaa
 [ -f results/archive_ds_sharp/year2016.npz ] || gsutil -m -q cp '$BUCKET/corpus/*.npz' results/archive_ds_sharp/
 [ -f results/jaxarimaa/regrounded_c256.pkl ] || gsutil -q cp $BUCKET/regrounded_c256.pkl results/jaxarimaa/regrounded_c256.pkl
 [ -f results/jaxarimaa/regrounded_plus9_c256.pkl ] || gsutil -q cp $BUCKET/regrounded_plus9_c256.pkl results/jaxarimaa/regrounded_plus9_c256.pkl
+[ -f results/jaxarimaa/${RUN}_init.pkl ] || gsutil -q cp $BUCKET/runs/$RUN/init.pkl results/jaxarimaa/${RUN}_init.pkl 2>/dev/null || true
 if [ ! -d results/jaxarimaa/${RUN}_ckpt ]; then
   mkdir -p results/jaxarimaa/${RUN}_ckpt
   gsutil -m -q rsync -r $BUCKET/runs/$RUN/ckpt results/jaxarimaa/${RUN}_ckpt 2>/dev/null || true

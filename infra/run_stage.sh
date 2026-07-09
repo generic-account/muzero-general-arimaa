@@ -43,6 +43,9 @@ fi
 if [ ! -f "results/jaxarimaa/regrounded_c256.pkl" ]; then
   gsutil -q cp "$BUCKET/regrounded_c256.pkl" "results/jaxarimaa/regrounded_c256.pkl" 2>/dev/null || true
 fi
+if [ ! -f "results/jaxarimaa/${RUN}_init.pkl" ]; then
+  gsutil -q cp "$BUCKET/runs/$RUN/init.pkl" "results/jaxarimaa/${RUN}_init.pkl" 2>/dev/null || true
+fi
 if [ ! -f "results/jaxarimaa/regrounded_plus9_c256.pkl" ]; then
   gsutil -q cp "$BUCKET/regrounded_plus9_c256.pkl" "results/jaxarimaa/regrounded_plus9_c256.pkl" 2>/dev/null || true
 fi

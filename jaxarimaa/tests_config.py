@@ -37,8 +37,8 @@ def check(path):
 
     # -- warm-start init: must be the re-grounded checkpoint, and KL must anchor it
     init = getattr(m, "INIT_PARAMS", None) or "regrounded"
-    assert "regrounded" in str(init), \
-        f"{path}: INIT_PARAMS must be the re-grounded ckpt (got {init})"
+    assert ("regrounded" in str(init)) or ("_init.pkl" in str(init)), \
+        f"{path}: INIT_PARAMS must be a re-grounded/per-run staged ckpt (got {init})"
     assert tc.kl_prior_weight > 0, f"{path}: KL trust region is OFF"
 
     # -- corpus mix: measured positive at 0.75, collapsed by 0.50; live bleed
@@ -78,6 +78,6 @@ def check(path):
 
 
 if __name__ == "__main__":
-    for p in ("configs/stage_a.py", "configs/confirm_reground.py"):
+    for p in ("configs/stage_a.py", "configs/stage_a1b.py", "configs/confirm_reground.py"):
         check(p)
     print("config lint passed")
