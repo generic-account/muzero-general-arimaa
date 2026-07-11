@@ -121,6 +121,12 @@ class TrainConfig:
     arena_interval: int = 10        # iters between learner-vs-anchor match rounds
     arena_games: int = 32           # games per color (played both colors)
     arena_threshold: float = 0.55   # score at which the anchor re-freezes to the learner
+    # EVAL search shape, pinned independently of TRAINING search shape: arms
+    # that train with different sims must still be MEASURED identically (arena,
+    # rung, eval-vs-random), else readings compare search depth, not nets.
+    # None = use cfg.mcts (backward compatible).
+    eval_num_sims: int | None = None
+    eval_num_considered: int | None = None
     # UNBIASED Elo: every ref_interval arena rounds, also play the learner vs a
     # FROZEN reference rung (initially the warm-start init) -> elo/vs_ref. No
     # promotion decision selects on this reading, unlike the chained estimate

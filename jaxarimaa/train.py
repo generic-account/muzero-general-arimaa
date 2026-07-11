@@ -274,7 +274,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                 model, state.params, ke, our_color=0,
                 n_games=min(cfg.selfplay.batch_size, 128),
                 max_steps=tc.eval_max_steps or cfg.selfplay.max_steps,
-                num_sims=min(cfg.mcts.num_simulations, 16),
+                num_sims=min(tc.eval_num_sims or cfg.mcts.num_simulations, 16),
                 max_considered=cfg.mcts.max_num_considered_actions, features=feats,
                 fast=feats.fast_search)
             w, l, u = int(w), int(l), int(u)
@@ -288,7 +288,8 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
 
         if feats.arena_gating and (it + 1) % tc.arena_interval == 0:
             key, ka1, ka2 = jax.random.split(key, 3)
-            ns, nc = cfg.mcts.num_simulations, cfg.mcts.max_num_considered_actions
+            ns = tc.eval_num_sims or cfg.mcts.num_simulations
+            nc = tc.eval_num_considered or cfg.mcts.max_num_considered_actions
             ms, g = (tc.eval_max_steps or cfg.selfplay.max_steps), tc.arena_games
             a1, b1, u1 = evaluate.play_match(model, state.params, anchor, ka1, 0,
                                              g, ms, ns, nc, feats,
