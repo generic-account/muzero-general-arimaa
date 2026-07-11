@@ -93,6 +93,11 @@ class TrainConfig:
     # its source; annealed to anneal_kl_prior_weight by the ratchet.
     kl_prior_weight: float = 0.0
     anneal_kl_prior_weight: float = 0.0
+    # FIXED leash anchor: path to a pkl to hold the KL trust region to. None =
+    # the run's own warm-start init (the ROLLING anchor that stair-stepped
+    # segment boundaries downward: each relaunch re-anchored the leash to a
+    # lower reference). Set this to the best-known-good prior (plus9).
+    kl_anchor_path: str | None = None
     # AlphaGo-style value-calibration phase: train ONLY the value/aux heads on a
     # frozen trunk + frozen policy head (optax.masked). Lets the value head fit
     # the self-play outcome distribution without churning the features the

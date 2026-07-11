@@ -52,6 +52,12 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     # default Elo reference rung.
     warm_init = state.params
     kl_anchor = warm_init if (init_params and tc.kl_prior_weight > 0) else None
+    if tc.kl_prior_weight > 0 and tc.kl_anchor_path:
+        # FIXED leash: hold to a designated strong prior, not the rolling init.
+        ka_params, _ = checkpoint.load(tc.kl_anchor_path)
+        kl_anchor = distributed.replicate_tree(mesh, ka_params)
+        if verbose:
+            print(f"KL leash anchored to FIXED prior {tc.kl_anchor_path}")
 
     # Preemption-safe checkpointing: restore full state (params+opt+step) if present.
     ckpt_mgr, start_it, anneal_sidecar, anchor_pkl = None, 0, None, None
