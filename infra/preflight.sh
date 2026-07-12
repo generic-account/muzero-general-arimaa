@@ -9,6 +9,11 @@ PY=${PY:-.venv/bin/python}
 echo "=== 1/5 config lint (measured-safe envelope) ==="
 PYTHONPATH=. "$PY" jaxarimaa/tests_config.py
 
+echo "=== 1b/5 stage-2 mechanism tests ==="
+PYTHONPATH=. "$PY" jaxarimaa/tests_stage2.py
+echo "=== 1c/5 selfplay semantics tests ==="
+PYTHONPATH=. "$PY" jaxarimaa/tests_selfplay.py
+
 echo "=== 2/5 ratchet trajectory tests ==="
 PYTHONPATH=. "$PY" jaxarimaa/tests_anneal.py
 

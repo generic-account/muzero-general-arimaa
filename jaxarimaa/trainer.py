@@ -70,6 +70,7 @@ def make_model(cfg: Config):
     dtype = _jnp.bfloat16 if cfg.features.bf16 else _jnp.float32
     f = cfg.features
     return net.make_network(cfg.net, dtype=dtype, moves_left_head=f.moves_left_head,
+                            dense_aux=f.dense_aux,
                             deep_supervision=f.deep_supervision, mtp=f.mtp,
                             smolgen=f.smolgen, rope=f.rope)
 
@@ -87,10 +88,14 @@ def _weighted_mean(x, w, wsum):
     return jnp.sum(w * x) / wsum
 
 
-def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0),
+def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0, 0.0),
             policy_weight=1.0, value_tail_weight=1.0, anchor_params=None,
             kl_weight=0.0):
-    ml_w, deep_w, mtp_w = aux_weights
+    # aux_weights = (moves_left, deep_supervision, mtp, dense); 3-tuples accepted
+    # for backward compatibility (dense weight 0).
+    if len(aux_weights) == 3:
+        aux_weights = (*aux_weights, 0.0)
+    ml_w, deep_w, mtp_w, dense_w = aux_weights
     obs = batch["obs"]
     logits, value, aux = jax.vmap(lambda o: apply_fn(params, o))(obs)
     logp = jax.nn.log_softmax(logits, axis=-1)
@@ -136,6 +141,11 @@ def loss_fn(params, apply_fn, batch, value_weight, aux_weights=(0.0, 0.0, 0.0),
         total = total + kl_weight * klm
         metrics["kl_prior"] = klm
 
+    if "dense" in aux and "dense_target" in batch:
+        dl = _weighted_mean(
+            jnp.mean((aux["dense"] - batch["dense_target"]) ** 2, axis=-1), w, wsum)
+        total = total + dense_w * dl
+        metrics["dense_loss"] = dl
     if "moves_left" in aux and "moves_left_target" in batch:
         ml = _weighted_mean((aux["moves_left"] - batch["moves_left_target"]) ** 2, w, wsum)
         total = total + ml_w * ml
@@ -178,7 +188,7 @@ def _augment_symmetry(batch, rng):
 # mid-run — traced, a weight change costs nothing; static, it would recompile.
 @functools.partial(jax.jit, static_argnums=(4, 5))
 def train_step(state: TrainState, batch, value_weight, rng, symmetry=False,
-               aux_weights=(0.0, 0.0, 0.0), policy_weight=1.0,
+               aux_weights=(0.0, 0.0, 0.0, 0.0), policy_weight=1.0,
                value_tail_weight=1.0, anchor_params=None, kl_weight=0.0):
     if symmetry:
         batch = _augment_symmetry(batch, rng)

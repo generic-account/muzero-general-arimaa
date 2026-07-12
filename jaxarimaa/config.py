@@ -25,7 +25,18 @@ class FeaturesConfig:
     arena_gating: bool = False         # run learner-vs-frozen-anchor matches -> chained Elo metric (train.py); NOT a data gate
     resign: bool = False               # adjudicate decided self-play games early (more games/rollout)
     playout_cap: bool = False          # KataGo playout-cap: cheap "fast" moves, train only on "full" moves
-    visit_policy_targets: bool = False  # policy target = root visit counts (optima/AZ style;
+    visit_policy_targets: bool = False
+    # --- Stage-2 (optima/KataGo-informed from-scratch loop) gates ---
+    deblunder: bool = False            # value targets = outcome Q-mixed past exploration
+                                       # blunders (records q_chosen/q_best per step)
+    dense_aux: bool = False            # dense Arimaa aux targets: trap ownership [4],
+                                       # capture-in-k [2], material trajectory [1]
+    prune_policy_targets: bool = False  # zero action_weights mass on unvisited actions
+                                        # + renormalize (closes the Q-imputation channel)
+    certification: bool = False        # self-play uses last CERTIFIED (arena-passing)
+                                       # params, not the raw learner
+    truncation_draw: bool = False      # max_steps games scored 0 (draw) as REAL value
+                                       # targets, optima-style (vs material adjudication)  # policy target = root visit counts (optima/AZ style;
                                         # zero mass on unvisited actions) instead of Gumbel
                                         # action_weights (which impute Q-reweighted mass for
                                         # NEVER-visited actions — poison when value is OOD)
@@ -163,6 +174,14 @@ class TrainConfig:
     anneal_best_leak: float = 5.0    # Elo/round the best-so-far baseline decays: plateaus
                                      # re-probe eventually instead of parking regressed
                                      # (small vs backoff, so a real cliff still parks long)
+    # --- Stage-2 knobs ---
+    deblunder_threshold: float = 0.15  # q_best - q_chosen above this = blunder
+    deblunder_width: float = 0.15      # mix ramps 0->1 over this width past threshold
+    dense_aux_weight: float = 0.3      # loss weight of the dense aux head
+    dense_aux_k: int = 32              # steps-horizon for capture-in-k / material traj
+    surprise_weight: float = 0.0       # per-row weight 1 + s*KL(target||prior); 0 = off
+    prior_temp: float = 1.0            # >1 flattens net priors fed to search (anti-
+                                       # self-sharpening, optima uses 1.2)
     # Slow-bleed guard: a decline of ~hold_band per round never trips the
     # backoff (the leaky best follows it down). Two consecutive rounds scoring
     # below this floor vs the CURRENT anchor = actively losing to a fixed

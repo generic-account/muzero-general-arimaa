@@ -501,19 +501,23 @@ def batched_gumbel_muzero_policy(
 # ---------------------------------------------------------------------------
 # jaxarimaa wrapper: identical signature to search.run_search (drop-in).
 # ---------------------------------------------------------------------------
-@functools.partial(jax.jit, static_argnums=(0, 4, 5, 6))
+@functools.partial(jax.jit, static_argnums=(0, 4, 5, 6, 7))
 def run_search(model, params, rng_key, states, num_simulations,
-               max_num_considered_actions, features=None):
+               max_num_considered_actions, features=None, prior_temp=1.0):
     from . import search as slow_search
 
     prior_logits, value, legal = slow_search._eval(model, params, states, features)
+    if prior_temp != 1.0:
+        # Anti-self-sharpening (optima/KataGo): flatten the net's priors fed to
+        # search so exploration survives the policy's own sharpening feedback.
+        prior_logits = prior_logits / prior_temp
     root = mctx.RootFnOutput(prior_logits=prior_logits, value=value,
                              embedding=states)
     return batched_gumbel_muzero_policy(
         params=params,
         rng_key=rng_key,
         root=root,
-        recurrent_fn=slow_search.make_recurrent_fn(model, features),
+        recurrent_fn=slow_search.make_recurrent_fn(model, features, prior_temp),
         num_simulations=num_simulations,
         invalid_actions=~legal,
         max_num_considered_actions=max_num_considered_actions,

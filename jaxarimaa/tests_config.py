@@ -77,7 +77,32 @@ def check(path):
     print(f"ok {path}")
 
 
+def check_stage2(path):
+    """Stage-2 invariants: the from-scratch loop must carry NO prior tethers
+    and ALL improvement mechanisms."""
+    m = load_cfg(path)
+    cfg, tc, ft = m.cfg, m.cfg.train, m.cfg.features
+    assert getattr(m, "INIT_PARAMS", None) is None, f"{path}: stage-2 is from scratch"
+    assert tc.kl_prior_weight == 0 and tc.corpus_mix == 0, \
+        f"{path}: prior tethers must be OFF in stage-2"
+    for gate in ("deblunder", "dense_aux", "prune_policy_targets",
+                 "certification", "truncation_draw"):
+        assert getattr(ft, gate), f"{path}: stage-2 gate {gate} is OFF"
+    assert not ft.resign and not ft.adjudicate_truncation, \
+        f"{path}: resign/material-adjudication excluded from stage-2"
+    assert tc.prior_temp > 1.0, f"{path}: prior flattening required"
+    assert cfg.mcts.num_simulations >= 64, f"{path}: operator too weak"
+    assert tc.eval_num_sims and tc.eval_num_considered, \
+        f"{path}: eval shape must be pinned for comparable readings"
+    assert cfg.features.arena_gating and tc.arena_games >= 128, \
+        f"{path}: certification needs powered arenas"
+    assert tc.ckpt_interval and tc.ckpt_dir and "://" not in tc.ckpt_dir, \
+        f"{path}: local ckpts + sidecars required"
+    print(f"ok {path} (stage-2 profile)")
+
+
 if __name__ == "__main__":
     for p in ("configs/stage_a.py", "configs/stage_a1b.py", "configs/confirm_reground.py"):
         check(p)
+    check_stage2("configs/stage2_pilot.py")
     print("config lint passed")

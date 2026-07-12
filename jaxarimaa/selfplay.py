@@ -28,6 +28,12 @@ class SPKnobs(typing.NamedTuple):
     full_prob: float = 0.25       # playout-cap: fraction of moves that get full sims
     fast_sims: int = 8            # sims for the cheap (untrained, not stored) moves
     greedy_after: int = 0         # play argmax after this many completed turns (0 = off)
+    # --- Stage-2 knobs (all inert at defaults) ---
+    dense_k: int = 32             # horizon (steps) for capture-in-k / material-trajectory
+    surprise_w: float = 0.0       # per-row loss weight 1 + s*KL(target||prior)
+    prior_temp: float = 1.0       # >1 flattens priors fed to search (anti-sharpening)
+    deblunder_threshold: float = 0.15
+    deblunder_width: float = 0.15
 
 
 def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
@@ -40,7 +46,8 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
     a greedy-after-N-turns switch for decisive play.
     """
     num_sims, max_considered = mcts
-    resign_thresh, full_prob, fast_sims, greedy_after = sp_knobs
+    (resign_thresh, full_prob, fast_sims, greedy_after,
+     dense_k, surprise_w, prior_temp, db_thresh, db_width) = sp_knobs
     playout_cap = features is not None and features.playout_cap
     resign = features is not None and features.resign
     if features is not None and features.fast_search:
@@ -54,8 +61,20 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         def branch(operand):
             s, k = operand
             out = search_impl.run_search(model, params, k, s, sims, max_considered,
-                                         features)
-            if features is not None and features.visit_policy_targets:
+                                         features, prior_temp)
+            root_cv = out.search_tree.children_values[:, 0]
+            root_vis = out.search_tree.children_visits[:, 0] > 0
+            # deblunder raw data: search Q of the played action vs the best
+            # VISITED alternative (root-player perspective, like node_values)
+            q_chosen = jnp.take_along_axis(root_cv, out.action[:, None], 1)[:, 0]
+            q_best = jnp.max(jnp.where(root_vis, root_cv, -jnp.inf), axis=-1)
+            if features is not None and features.prune_policy_targets:
+                # Close the Q-imputation channel: target mass only on actions
+                # the search actually visited, renormalized (KataGo-style
+                # pruning adapted to Gumbel action_weights).
+                w = jnp.where(root_vis, out.action_weights, 0.0)
+                weights = w / jnp.maximum(w.sum(-1, keepdims=True), 1e-8)
+            elif features is not None and features.visit_policy_targets:
                 # optima/AZ-style target: normalized root visit counts. Unvisited
                 # actions get ZERO mass — no Q-imputation channel, so an OOD
                 # value head can only reorder the visited few, not reweight the
@@ -65,7 +84,19 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
                 weights = v / jnp.maximum(v.sum(-1, keepdims=True), 1.0)
             else:
                 weights = out.action_weights
-            return out.action, weights, out.search_tree.node_values[:, 0]
+            if surprise_w > 0.0:
+                # KataGo policy-surprise weighting: rows where search genuinely
+                # disagreed with the prior teach the most.
+                pri = jax.nn.log_softmax(
+                    out.search_tree.children_prior_logits[:, 0], axis=-1)
+                wt = weights.astype(jnp.float32)
+                kl = jnp.sum(jnp.where(wt > 0, wt * (jnp.log(wt + 1e-9) - pri), 0.0),
+                             axis=-1)
+                row_w = 1.0 + surprise_w * kl
+            else:
+                row_w = jnp.ones_like(q_chosen)
+            return (out.action, weights, out.search_tree.node_values[:, 0],
+                    q_chosen, q_best, row_w)
         return branch
 
     # Playout-cap randomization with a STATIC count: exactly `n_full` of the T
@@ -84,11 +115,11 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         states, rng = carry
         if playout_cap:
             rng, ks, kr = jax.random.split(rng, 3)
-            action, weights, root_v = jax.lax.cond(
+            action, weights, root_v, q_chosen, q_best, row_w = jax.lax.cond(
                 is_full, _search(num_sims), _search(fast_sims), (states, ks))
         else:
             rng, ks, kr = jax.random.split(rng, 3)
-            action, weights, root_v = _search(num_sims)((states, ks))
+            action, weights, root_v, q_chosen, q_best, row_w = _search(num_sims)((states, ks))
 
         if greedy_after:
             # Decisive play after the opening (optima's temp->0 @ move 15): switch
@@ -105,7 +136,31 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
             "policy_target": weights.astype(jnp.bfloat16),
             "player": states.player,
         }
+        if features is not None and features.deblunder:
+            rec["q_chosen"] = q_chosen.astype(jnp.float32)
+            rec["q_best"] = q_best.astype(jnp.float32)
+        if surprise_w > 0.0:
+            rec["weight"] = row_w.astype(jnp.float32)
         nstates = jax.vmap(jenv.step)(states, action)
+        if features is not None and features.dense_aux:
+            # Per-step capture events for the dense targets, GOLD's perspective:
+            # +1 = a silver piece was captured (gold gains), -1 = gold captured.
+            def side_count(b, lo, hi):
+                return jnp.sum((b >= lo) & (b <= hi), axis=(-2, -1))
+            g_lost = (side_count(states.board, 1, 6)
+                      - side_count(nstates.board, 1, 6)) > 0
+            s_lost = (side_count(states.board, 7, 12)
+                      - side_count(nstates.board, 7, 12)) > 0
+            traps = []
+            for (tx, ty) in C.TRAPS_XY:
+                prev_t = states.board[:, ty, tx]
+                next_t = nstates.board[:, ty, tx]
+                gold_cap = (prev_t >= 1) & (prev_t <= 6) & (next_t == 0) & g_lost
+                silv_cap = (prev_t >= 7) & (next_t == 0) & s_lost
+                traps.append(silv_cap.astype(jnp.int8) - gold_cap.astype(jnp.int8))
+            rec["trap_cap"] = jnp.stack(traps, axis=-1)          # int8 [B, 4]
+            rec["mat_delta"] = (s_lost.astype(jnp.int8)
+                                - g_lost.astype(jnp.int8))       # int8 [B]
         if resign:
             # Resign only off FULL-search root values: fast (8-sim) estimates are
             # noisy and would adjudicate games spuriously, corrupting the stored
@@ -131,7 +186,11 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
     # Value carried into truncated tails: material/advancement adjudication (a
     # grounded, discriminative signal — breaks the self-confirming near-zero
     # bootstrap loop) or, when the feature is off, the net's own value.
-    if features is not None and features.adjudicate_truncation:
+    if features is not None and features.truncation_draw:
+        # optima-style: hitting the step cap scores as a REAL draw (0), giving
+        # the value head a true (if bland) signal instead of a proxy.
+        boot_val = jnp.zeros((batch,), jnp.float32)
+    elif features is not None and features.adjudicate_truncation:
         boot_val = jax.vmap(jenv.material_eval)(final_states)
     else:
         fobs = jax.vmap(lambda s: jenv.observe(s, features))(final_states)
@@ -143,8 +202,10 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
     #  plies to game end (terminal -> 0; else next+1; capped; truncated tail -> capped).
     MLCAP = C.MOVES_LEFT_CAP
 
+    deblunder = features is not None and features.deblunder
+
     def back(carry, step):
-        next_player, v, ml, grounded = carry
+        next_player, v, ml, grounded, db_v, db_w = carry
         player, term, winner = step["player"], step["term"], step["winner"]
         outcome = jnp.where(winner == player, 1.0, -1.0)
         sign = jnp.where(player == next_player, 1.0, -1.0)
@@ -158,15 +219,42 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         # terminal RESETS the carry (games are lane-concatenated; a later game's
         # real terminal must not ground an earlier game's resign prefix).
         g_t = jnp.where(term, ~step["belief_adj"], grounded)
-        return (player, v_t, ml_t, g_t), (v_t, (ml_t / MLCAP).astype(jnp.float32), g_t)
+        if deblunder:
+            # optima/KataGo Q-mix: positions BEFORE an exploration blunder take
+            # value targets mixed toward the PRE-blunder search estimate (what
+            # the outcome would have been under good play) instead of the noisy
+            # realized outcome. db_v flips perspective like v; terminals reset
+            # the carry (blunders don't cross game boundaries in a lane).
+            db_v_here = (sign * db_v).astype(jnp.float32)
+            db_w_here = jnp.where(term, 0.0, db_w)
+            v_out = (1.0 - db_w_here) * v_t + db_w_here * db_v_here
+            # does THIS step's mover blunder? (nearest-downstream blunder wins:
+            # overwrite the carry for earlier steps)
+            gap = step["q_best"] - step["q_chosen"]
+            w_new = jnp.clip((gap - db_thresh) / jnp.maximum(db_width, 1e-6),
+                             0.0, 1.0)
+            is_bl = (w_new > 0.0) & (~term)
+            db_v_next = jnp.where(is_bl, step["q_best"], db_v_here)
+            db_w_next = jnp.where(is_bl, w_new, db_w_here)
+            return ((player, v_t, ml_t, g_t, db_v_next, db_w_next),
+                    (v_out, (ml_t / MLCAP).astype(jnp.float32), g_t))
+        return ((player, v_t, ml_t, g_t, db_v, db_w),
+                (v_t, (ml_t / MLCAP).astype(jnp.float32), g_t))
 
+    scan_steps = {"player": recs["player"], "term": recs["term"],
+                  "winner": recs["winner"], "belief_adj": recs["belief_adj"]}
+    if deblunder:
+        scan_steps["q_chosen"] = recs["q_chosen"]
+        scan_steps["q_best"] = recs["q_best"]
     _, (value_target, moves_left_target, value_real) = jax.lax.scan(
         back,
         (final_states.player, boot_val.astype(jnp.float32),
          jnp.full(boot_val.shape, MLCAP, jnp.float32),
-         jnp.zeros(boot_val.shape, bool)),
-        {"player": recs["player"], "term": recs["term"], "winner": recs["winner"],
-         "belief_adj": recs["belief_adj"]},
+         jnp.full(boot_val.shape,
+                  bool(features is not None and features.truncation_draw)),
+         jnp.zeros((batch,), jnp.float32),   # db_v
+         jnp.zeros((batch,), jnp.float32)),  # db_w
+        scan_steps,
         reverse=True,
     )
     # value_target is the standard MC game-outcome target (terminal -> +/-1,
@@ -187,6 +275,47 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         # value_tail_weight) — crude tail targets churned the trunk (probe).
         "value_real": value_real.astype(jnp.float32),
     }
+    if surprise_w > 0.0:
+        out["weight"] = recs["weight"]  # loss_fn's per-row weight hook
+    if features is not None and features.dense_aux:
+        # Dense targets via a second reverse scan (EWMA of future events, reset
+        # at terminals; horizon set by dense_k -> gamma = 1 - 1/k):
+        #   trap_own[4]  in [-1,1]: discounted future capture flow per trap
+        #   cap_soon[2]  in [0,1]:  decayed will-lose-a-piece indicator (me/opp)
+        #   mat_traj[1]  in [-1,1]: discounted future material swing
+        # All emitted in the MOVER's perspective per row.
+        gamma = 1.0 - 1.0 / float(dense_k)
+
+        def dback(carry, step):
+            own, cg, cs, mat = carry
+            ev = step["trap_cap"].astype(jnp.float32)           # [B,4] gold persp
+            g_lost = jnp.any(step["trap_cap"] == -1, axis=-1).astype(jnp.float32)
+            s_lost = jnp.any(step["trap_cap"] == 1, axis=-1).astype(jnp.float32)
+            md = step["mat_delta"].astype(jnp.float32)          # gold persp
+            reset = step["term"][:, None].astype(jnp.float32)
+            r1 = step["term"].astype(jnp.float32)
+            own_t = ((1 - gamma) * ev + gamma * own) * (1 - reset) + (1 - gamma) * ev * reset
+            cg_t = jnp.maximum(g_lost, gamma * cg * (1 - r1))
+            cs_t = jnp.maximum(s_lost, gamma * cs * (1 - r1))
+            mat_t = (1 - gamma) * md + gamma * mat * (1 - r1)
+            pl = step["player"].astype(jnp.float32)             # 0 gold, 1 silver
+            flip = 1.0 - 2.0 * pl                               # +1 gold, -1 silver
+            dense_row = jnp.concatenate([
+                own_t * flip[:, None],                          # mover persp traps
+                jnp.where(pl > 0, cs_t, cg_t)[:, None],         # I lose a piece soon
+                jnp.where(pl > 0, cg_t, cs_t)[:, None],         # opp loses soon
+                (mat_t * flip)[:, None],                        # mover material traj
+            ], axis=-1)
+            return (own_t, cg_t, cs_t, mat_t), dense_row
+
+        B4 = jnp.zeros((batch, 4), jnp.float32)
+        B1 = jnp.zeros((batch,), jnp.float32)
+        _, dense_target = jax.lax.scan(
+            dback, (B4, B1, B1, B1),
+            {"trap_cap": recs["trap_cap"], "mat_delta": recs["mat_delta"],
+             "term": recs["term"], "player": recs["player"]},
+            reverse=True)
+        out["dense_target"] = dense_target.astype(jnp.float32)  # [T,B,7]
     if features is not None and features.moves_left_head:
         out["moves_left_target"] = moves_left_target
     if features is not None and features.mtp:

@@ -97,7 +97,11 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         resign_thresh=cfg.selfplay.resign_threshold,
         full_prob=cfg.selfplay.full_search_prob,
         fast_sims=cfg.selfplay.fast_sims,
-        greedy_after=cfg.selfplay.greedy_after_turns)
+        greedy_after=cfg.selfplay.greedy_after_turns,
+        dense_k=tc.dense_aux_k, surprise_w=tc.surprise_weight,
+        prior_temp=tc.prior_temp,
+        deblunder_threshold=tc.deblunder_threshold,
+        deblunder_width=tc.deblunder_width)
     # Adaptive game length: if tiers are configured, hop between them to keep the
     # game-completion fraction in a target band as the bot's play-length drifts
     # (each tier is a separate compile, cached after first use).
@@ -185,7 +189,13 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         # --- self-play (each device plays distinct games; output sharded) ---
         t0 = time.time()
         key, ksp = jax.random.split(key)
-        recs, completed_frac = generate(state.params, ksp)  # learner's params
+        # Certification gating (optima): self-play data comes from the last
+        # arena-PROMOTED net (the anchor doubles as certified champion), so a
+        # bad gradient step can never poison the data distribution. The
+        # learner trains on regardless and gets promoted when it proves out.
+        gen_params = (anchor if (feats.certification and anchor is not None)
+                      else state.params)
+        recs, completed_frac = generate(gen_params, ksp)
         jax.block_until_ready(recs)                # settle async dispatch before timing
         sp_t = time.time() - t0
         cur_T = tiers[tier_ix]
@@ -223,7 +233,8 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                     batch = buf.sample(ksmp, tc.train_batch_size)
                 state, last = trainer.train_step(
                     state, batch, value_w, kaug, feats.symmetry_aug,
-                    (tc.moves_left_weight, tc.deep_supervision_weight, tc.mtp_weight),
+                    (tc.moves_left_weight, tc.deep_supervision_weight,
+                     tc.mtp_weight, tc.dense_aux_weight),
                     tc.policy_loss_weight, value_tail_w, kl_anchor, kl_w)
             jax.block_until_ready(state.params)
         tr_t = time.time() - t1
@@ -252,6 +263,8 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             if "value_real_mse" in last:  # undiluted value-head health signal
                 m["loss/value_real_mse"] = float(last["value_real_mse"])
                 m["loss/value_real_frac"] = float(last["value_real_frac"])
+            if "dense_loss" in last:
+                m["loss/dense"] = float(last["dense_loss"])
             if "kl_prior" in last:  # drift from the pretrained prior
                 m["loss/kl_prior"] = float(last["kl_prior"])
         logger.write(it, m)

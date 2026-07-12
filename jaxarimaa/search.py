@@ -42,7 +42,7 @@ def _eval(model, params, states, features):
     return _mask_logits(logits, legal), value, legal
 
 
-def make_recurrent_fn(model, features):
+def make_recurrent_fn(model, features, prior_temp=1.0):
     def recurrent_fn(params, rng_key, action, embedding):
         state = embedding
         prev_player = state.player
@@ -60,6 +60,8 @@ def make_recurrent_fn(model, features):
         # _eval shares one board analysis (observe_and_mask) and returns the
         # legal mask we need for immobility — same XLA graph as inlining it.
         prior_logits, value, legal = _eval(model, params, nstate, features)
+        if prior_temp != 1.0:  # flatten non-root priors too (optima applies everywhere)
+            prior_logits = prior_logits / prior_temp
 
         immobile = ~jnp.any(legal, axis=-1) & (~nstate.terminated) & (~prev_term)
         nstate = nstate.replace(
@@ -84,9 +86,9 @@ def make_recurrent_fn(model, features):
     return recurrent_fn
 
 
-@functools.partial(jax.jit, static_argnums=(0, 4, 5, 6))
+@functools.partial(jax.jit, static_argnums=(0, 4, 5, 6, 7))
 def run_search(model, params, rng_key, states, num_simulations,
-               max_num_considered_actions, features=None):
+               max_num_considered_actions, features=None, prior_temp=1.0):
     """Run Gumbel-MuZero search (= AlphaZero here) from a batch of root States.
 
     `features` (a FeaturesConfig or None) selects the observation planes; it must
@@ -94,12 +96,14 @@ def run_search(model, params, rng_key, states, num_simulations,
     use `.action` (chosen move) and `.action_weights` (improved policy target).
     """
     prior_logits, value, legal = _eval(model, params, states, features)
+    if prior_temp != 1.0:
+        prior_logits = prior_logits / prior_temp
     root = mctx.RootFnOutput(prior_logits=prior_logits, value=value, embedding=states)
     return mctx.gumbel_muzero_policy(
         params=params,
         rng_key=rng_key,
         root=root,
-        recurrent_fn=make_recurrent_fn(model, features),
+        recurrent_fn=make_recurrent_fn(model, features, prior_temp),
         num_simulations=num_simulations,
         invalid_actions=~legal,
         max_num_considered_actions=max_num_considered_actions,

@@ -19,6 +19,8 @@ class ArimaaNet(nn.Module):
     num_actions: int = C.N_ACTIONS
     dtype: object = jnp.float32     # compute dtype (bf16 for mixed precision)
     moves_left_head: bool = False   # aux head: normalized plies to game end
+    dense_aux: bool = False         # aux head: 7 dense Arimaa targets (trap flow x4,
+                                    # capture-soon me/opp, material trajectory)
     deep_supervision: bool = False  # intermediate policy/value heads
     mtp: bool = False               # aux head: predict next-step value
     smolgen: bool = False           # transformer: dynamic attention bias
@@ -45,7 +47,7 @@ class ArimaaNet(nn.Module):
         policy_logits, value = self._heads(feats, conv, dense)
 
         aux = {}
-        if self.moves_left_head or self.mtp:
+        if self.moves_left_head or self.mtp or self.dense_aux:
             stem = nn.relu(conv(2)(feats)).reshape(-1)  # shared scalar-head stem
 
             def scalar_head(activation):
@@ -56,6 +58,9 @@ class ArimaaNet(nn.Module):
                 aux["moves_left"] = scalar_head(jax.nn.sigmoid)
             if self.mtp:              # predict the next step's value (foresight)
                 aux["mtp_value"] = scalar_head(jnp.tanh)
+            if self.dense_aux:        # KataGo-style dense supervision, Arimaa-native
+                h = nn.relu(dense(self.cfg.channels)(stem))
+                aux["dense"] = jnp.tanh(dense(7)(h)).astype(jnp.float32)
         if self.deep_supervision and len(inters) >= 2:
             # tap two evenly-spaced intermediate feature maps
             idxs = (len(inters) // 3, 2 * len(inters) // 3)
@@ -68,8 +73,9 @@ class ArimaaNet(nn.Module):
         return policy_logits.astype(jnp.float32), value.astype(jnp.float32), aux
 
 
-def make_network(cfg: NetConfig, dtype=jnp.float32, moves_left_head=False,
+def make_network(cfg: NetConfig, dtype=jnp.float32, moves_left_head=False, dense_aux=False,
                  deep_supervision=False, mtp=False, smolgen=False, rope=False):
     return ArimaaNet(cfg=cfg, dtype=dtype, moves_left_head=moves_left_head,
+                     dense_aux=dense_aux,
                      deep_supervision=deep_supervision, mtp=mtp,
                      smolgen=smolgen, rope=rope)
