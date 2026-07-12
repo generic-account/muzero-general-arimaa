@@ -92,7 +92,12 @@ if [ -f \$HOME/RUN_DONE_$RUN ]; then echo done | gsutil -q cp - $BUCKET/runs/$RU
 TOK=\$(curl -s -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
 curl -s -X DELETE -H "Authorization: Bearer \$TOK" "https://tpu.googleapis.com/v2/projects/arimaa-tpu-2026/locations/$ZONE/queuedResources/$QR?force=true"
 EOF
-$GC compute tpus tpu-vm scp "$TMPJ" "$NODE":~/janitor.sh --zone="$ZONE" 2>/dev/null
+# deliver via ssh+base64 (scp failed SILENTLY once -> janitorless lanes
+# idled after completion; always verify delivery)
+B64=$(base64 < "$TMPJ" | tr -d '\n')
+SSH "echo $B64 | base64 -d > ~/janitor.sh"
+JOK=$(SSH '[ -s ~/janitor.sh ] && echo YES || echo NO' | tail -1)
+[ "$JOK" = "YES" ] || { echo "[resurrect] JANITOR DELIVERY FAILED"; exit 3; }
 SSH "chmod +x ~/janitor.sh
 rm -f /tmp/libtpu_lockfile ~/RUN_DONE_$RUN ~/RUN_FAILED_$RUN
 cd ~/muzero-general-arimaa
