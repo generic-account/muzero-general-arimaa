@@ -50,17 +50,22 @@ def board_to_sharp(board, player):
     return "\n".join(lines)
 
 
-def eval_positions(boards, players, winprobscale):
-    """Run sharp evalDump over all positions; return win-prob array [N] in
-    side-to-move perspective (input order preserved)."""
+def eval_positions(boards, players, winprobscale, mode="static", depth=8):
+    """Score all positions with sharp: mode=static -> evalDump (instant, weak
+    judge); mode=search -> searchDump at fixed depth (~130ms/pos at d8 —
+    full-engine-quality judgments; flips static's sign on ~9% of positions,
+    the tactical ones). Returns win-prob array [N], side-to-move perspective."""
     recs = [board_to_sharp(boards[i], int(players[i])) for i in range(len(boards))]
     with tempfile.NamedTemporaryFile("w", suffix=".pos", delete=False) as f:
         f.write("\n;\n".join(recs))
         posfile = f.name
+    if mode == "search":
+        cmd = [SHARP, "searchDump", posfile, "-d", str(depth),
+               "-winprobscale", str(winprobscale)]
+    else:
+        cmd = [SHARP, "evalDump", posfile, "-winprobscale", str(winprobscale)]
     try:
-        out = subprocess.run(
-            [SHARP, "evalDump", posfile, "-winprobscale", str(winprobscale)],
-            capture_output=True, text=True, check=True).stdout
+        out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
     finally:
         os.unlink(posfile)
     winprobs = []
@@ -82,6 +87,10 @@ def main():
     ap.add_argument("--winprobscale", type=float, default=4500.0)
     ap.add_argument("--chunk", type=int, default=20000,
                     help="positions per evalDump invocation (bounds the temp file)")
+    ap.add_argument("--mode", choices=("static", "search"), default="static")
+    ap.add_argument("--depth", type=int, default=8, help="search depth (steps) for --mode search")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="parallel sharp processes over chunks (search mode is CPU-bound)")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     files = [f for p in args.shards for f in sorted(glob.glob(p))]
@@ -93,10 +102,20 @@ def main():
         boards, players = d["board"], d["player"]
         N = len(boards)
         sv = np.empty(N, np.float32)
-        for s in range(0, N, args.chunk):
-            e = min(s + args.chunk, N)
-            wp = eval_positions(boards[s:e], players[s:e], args.winprobscale)
-            sv[s:e] = 2.0 * wp - 1.0  # win-prob -> value in [-1,1], side-to-move perspective
+        spans = [(s0, min(s0 + args.chunk, N)) for s0 in range(0, N, args.chunk)]
+        if args.workers > 1:
+            from concurrent.futures import ProcessPoolExecutor
+            with ProcessPoolExecutor(max_workers=args.workers) as ex:
+                futs = {ex.submit(eval_positions, boards[a:b], players[a:b],
+                                  args.winprobscale, args.mode, args.depth): (a, b)
+                        for a, b in spans}
+                for fut, (a, b) in futs.items():
+                    sv[a:b] = 2.0 * fut.result() - 1.0
+        else:
+            for a, b in spans:
+                wp = eval_positions(boards[a:b], players[a:b],
+                                    args.winprobscale, args.mode, args.depth)
+                sv[a:b] = 2.0 * wp - 1.0
         d["sharp_value"] = sv
         outpath = os.path.join(args.out, os.path.basename(f))
         np.savez_compressed(outpath, **d)
