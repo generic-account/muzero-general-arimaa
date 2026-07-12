@@ -77,7 +77,7 @@ fi
 echo staged" | tail -1
 
 # 4. Launch supervisor + janitor (janitor shipped as a file to avoid nesting).
-TMPJ=$(mktemp /tmp/janitor_XXXX.sh)
+TMPJ=$(mktemp /tmp/janitorXXXXXX)  # Xs must be TRAILING: macOS mktemp rejects suffixed templates (this silently broke EVERY scp-era janitor delivery)
 cat > "$TMPJ" <<EOF
 #!/bin/bash
 DEADLINE=\$(( \$(date +%s) + 100*3600 ))
