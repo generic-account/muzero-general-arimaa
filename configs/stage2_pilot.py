@@ -74,4 +74,5 @@ cfg = Config(
 )
 
 train.train(cfg, out_path=f"results/jaxarimaa/{RUN}.pkl", eval_every=8,
-            logdir=f"results/jaxarimaa/{RUN}_tb")
+            logdir=f"results/jaxarimaa/{RUN}_tb",
+            profile_dir=f"/tmp/xla_{RUN}")  # iteration-2 trace -> optimization pass
