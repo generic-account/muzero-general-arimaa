@@ -9,6 +9,7 @@ Run a CPU smoke test:
 """
 
 import argparse
+import dataclasses
 import json
 import math
 import os
@@ -19,7 +20,7 @@ import jax.numpy as jnp
 
 from . import (anneal, checkpoint, checkpointing, distributed, env as jenv,
                evaluate, metrics, perf, selfplay, trainer)
-from .config import Config, tiny_config, tiny_transformer_config
+from .config import Config, NetConfig, tiny_config, tiny_transformer_config
 
 
 def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
@@ -142,6 +143,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     # measurement decoupled from promotion gating. Survives preemption via
     # rung.pkl + sidecar fields.
     rung, rung_elo, arena_rounds = None, 0.0, 0
+    rung_model = model  # may differ: a planted rung can be another architecture
     rung_pkl = (os.path.join(ckpt_dir, "rung.pkl")
                 if (anneal_sidecar and tc.ref_interval) else None)
     if feats.arena_gating and tc.ref_interval:
@@ -150,6 +152,13 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             r_params, r_meta = checkpoint.load(rung_pkl)
             rung = distributed.replicate_tree(mesh, r_params)
             rung_elo = float(r_meta.get("elo", 0.0))
+            if r_meta.get("net"):  # cross-architecture rung (e.g. planted C256
+                # imitation net measuring a C128 from-scratch run)
+                rcfg = dataclasses.replace(
+                    cfg, net=NetConfig(**r_meta["net"]),
+                    features=dataclasses.replace(feats,
+                                                 **r_meta.get("heads", {})))
+                rung_model = trainer.make_model(rcfg)
             if verbose:
                 print(f"restored elo reference rung (elo {rung_elo:+.0f})")
 
@@ -352,10 +361,13 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                 key, kr1, kr2 = jax.random.split(key, 3)
                 ra, rb, ru = evaluate.play_match(model, state.params, rung, kr1,
                                                  0, g, ms, ns, nc, feats,
-                                                 feats.fast_search)
-                ra2, rb2, ru2 = evaluate.play_match(model, rung, state.params,
+                                                 feats.fast_search,
+                                                 model_b=rung_model)
+                ra2, rb2, ru2 = evaluate.play_match(rung_model, rung,
+                                                    state.params,
                                                     kr2, 0, g, ms, ns, nc,
-                                                    feats, feats.fast_search)
+                                                    feats, feats.fast_search,
+                                                    model_b=model)
                 rw, rl = int(ra) + int(rb2), int(rb) + int(ra2)
                 rd = int(ru) + int(ru2)
                 rs = (rw + 0.5 * rd) / max(rw + rl + rd, 1)
@@ -372,19 +384,31 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                     key, kc1, kc2 = jax.random.split(key, 3)
                     ca, cb, cu = evaluate.play_match(model, new_rung, rung, kc1,
                                                      0, g, ms, ns, nc, feats,
-                                                     feats.fast_search)
-                    ca2, cb2, cu2 = evaluate.play_match(model, rung, new_rung,
+                                                     feats.fast_search,
+                                                     model_b=rung_model)
+                    ca2, cb2, cu2 = evaluate.play_match(rung_model, rung,
+                                                        new_rung,
                                                         kc2, 0, g, ms, ns, nc,
-                                                        feats, feats.fast_search)
+                                                        feats,
+                                                        feats.fast_search,
+                                                        model_b=model)
                     cw, cl = int(ca) + int(cb2), int(cb) + int(ca2)
                     cd = int(cu) + int(cu2)
                     cs = min(max((cw + 0.5 * cd) / max(cw + cl + cd, 1),
                                  0.01), 0.99)
                     rung_elo += 400.0 * math.log10(cs / (1.0 - cs))
                     rung = new_rung
+                    rung_model = model  # promoted rung = the learner's arch
                     if rung_pkl:
                         checkpoint.save(rung_pkl + ".tmp", rung,
-                                        {"elo": rung_elo})
+                                        {"elo": rung_elo,
+                                         "net": dataclasses.asdict(cfg.net),
+                                         "heads": {
+                                             "moves_left_head": feats.moves_left_head,
+                                             "dense_aux": feats.dense_aux,
+                                             "mtp": feats.mtp,
+                                             "deep_supervision": feats.deep_supervision,
+                                         }})
                         os.replace(rung_pkl + ".tmp", rung_pkl)
                     if verbose:
                         print(f"          [rung] new reference frozen at "

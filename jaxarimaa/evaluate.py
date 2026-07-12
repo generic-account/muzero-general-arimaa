@@ -64,11 +64,16 @@ def play_vs_random(model, params, rng, our_color, n_games, max_steps,
     return wins, losses, unfinished
 
 
-@functools.partial(jax.jit, static_argnums=(0, 4, 5, 6, 7, 8, 9, 10))
+@functools.partial(jax.jit, static_argnums=(0, 4, 5, 6, 7, 8, 9, 10),
+                   static_argnames=("model_b",))
 def play_match(model, params_a, params_b, rng, a_color, n_games, max_steps,
-               num_sims, max_considered, features=None, fast=False):
+               num_sims, max_considered, features=None, fast=False, *,
+               model_b=None):
     """Play `params_a` (as `a_color`) vs `params_b` via search, batched over games.
     Returns (a_wins, b_wins, unfinished). Used for the arena Elo metric (learner vs anchor).
+    `model_b` applies to `params_b` when the two sides are different
+    architectures (e.g. the fixed reference rung vs the learner); default is
+    the shared `model`.
     """
     rng, kinit = jax.random.split(rng)
     states = jax.vmap(jenv.init_state)(jax.random.split(kinit, n_games))
@@ -79,8 +84,9 @@ def play_match(model, params_a, params_b, rng, a_color, n_games, max_steps,
         states, done, result, rng = carry
         rng, ka, kb = jax.random.split(rng, 3)
         impl = _run_search_impl(fast)
+        mb = model if model_b is None else model_b
         out_a = impl(model, params_a, ka, states, num_sims, max_considered, features)
-        out_b = impl(model, params_b, kb, states, num_sims, max_considered, features)
+        out_b = impl(mb, params_b, kb, states, num_sims, max_considered, features)
         action = jnp.where(states.player == a_color, out_a.action, out_b.action)
         nstates = jax.vmap(jenv.step)(states, action)
         nstates = jenv.where_state(done, states, nstates)  # freeze finished lanes

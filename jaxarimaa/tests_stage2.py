@@ -127,6 +127,27 @@ def test_dense_head_and_loss():
     print(f"ok dense_head (loss {float(m['dense_loss']):.4f})")
 
 
+def test_cross_arch_rung_match():
+    """play_match(model_b=...) must support a rung whose architecture differs
+    from the learner's (s2pilot crash 2026-07-12: C256x15 planted rung vs
+    C128x10 from-scratch net -> ScopeParamShapeError)."""
+    from jaxarimaa import evaluate
+    cfg_a = CFG
+    cfg_b = dataclasses.replace(
+        CFG, net=dataclasses.replace(CFG.net, channels=CFG.net.channels * 2,
+                                     blocks=CFG.net.blocks + 1),
+        features=dataclasses.replace(CFG.features, moves_left_head=True))
+    model_a = trainer.make_model(cfg_a)
+    model_b = trainer.make_model(cfg_b)
+    pa = trainer.create_train_state(cfg_a, jax.random.PRNGKey(0)).params
+    pb = trainer.create_train_state(cfg_b, jax.random.PRNGKey(1)).params
+    a, b, u = evaluate.play_match(model_a, pa, pb, jax.random.PRNGKey(2),
+                                  0, 4, 16, 4, 4, cfg_a.features,
+                                  cfg_a.features.fast_search, model_b=model_b)
+    assert int(a) + int(b) + int(u) == 4
+    print(f"ok cross_arch_rung_match (W{int(a)} L{int(b)} U{int(u)})")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

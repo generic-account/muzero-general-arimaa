@@ -1,0 +1,1695 @@
+
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+
+ r r r r r r r r
+ h d c m e c d h
+ - - - - E - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ D H C M - C H D
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0       8.2      -3  a7-a6 a8-a7 
+    3       0.0      80.0      -3  a7-a6 a8-a7 b8-a8 
+    4       0.0     612.1       1  d7-d6 e7-d7 d6-d5 d7-d6 
+   --       0.0     612.1      --  d7-d6 e7-d7 d6-d5 d7-d6 
+   --    node count = 6121
+
+Applying this move: md7s ee7w md6s ed7s
+
+ r r r r r r r r
+ h d c m e c d h
+ - - - - E - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ D H C M - C H D
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0       8.2      -3  a7-a6 a8-a7 
+    3       0.0      80.0      -3  a7-a6 a8-a7 b8-a8 
+    4       0.0     609.7       1  d7-d6 e7-d7 d6-d5 d7-d6 
+   --       0.0     609.7      --  d7-d6 e7-d7 d6-d5 d7-d6 
+   --    node count = 6097
+
+Applying this move: md7s ee7w md6s ed7s
+
+ r r r r r r r r
+ h d c m e c d h
+ - - - - E - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ D H C M - C H D
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0       8.2      -3  a7-a6 a8-a7 
+    3       0.0      81.3      -3  a7-a6 a8-a7 b8-a8 
+    4       0.0     635.4       1  d7-d6 e7-d7 d6-d5 d7-d6 
+   --       0.0     635.4      --  d7-d6 e7-d7 d6-d5 d7-d6 
+   --    node count = 6354
+
+Applying this move: md7s ee7w md6s ed7s
+
+ r r r r r r r r
+ h d c - - c d h
+ - - - e - - - -
+ - - - E - - - -
+ - - - m - - - -
+ - H - - - - - -
+ D - C M - C H D
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      20.5       0  d6-e6 e6-e5 
+    3       0.0     225.1       2  d6-e6 e6-e5 e5-e4 
+    4       0.0    2052.7       2  d6-e6 e8-e7 e6-e5 e5-e4 
+   --       0.0    2052.7      --  d6-e6 e8-e7 e6-e5 e5-e4 
+   --    node count = 20527
+
+Applying this move: ed6e re8s ee6s ee5s
+
+ r r r r - r r r
+ h d c - r c d h
+ - - - - - - - -
+ - - - - - - - -
+ - - E - e - - -
+ - H - - - - - -
+ D - C M - C H D
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      29.2    -493  e7-e6 e6-e5 
+    3       0.0     355.7    -493  e7-e6 e6-e5 f8-e8 
+    4       0.0    3727.5    -303  e4-e3 e3-e2 f2-f3 e2-f2 
+   --       0.0    3727.5      --  e4-e3 e3-e2 f2-f3 e2-f2 
+   --    node count = 37275
+
+Applying this move: ee4s ee3s Cf2n Cf3x ee2e
+
+ r r r r - r r r
+ h d c - r c d h
+ - - - - - - - -
+ - - - - - - - -
+ - H - - - - - -
+ - - - - E - - -
+ D - C M - e H D
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      23.8    -302  g2-g3 f2-g2 
+    3       0.0     278.3    -302  g2-g3 f2-g2 e7-d7 
+    4       0.0    2807.0    -297  g2-g3 f2-g2 g3-f3 g2-g3 
+   --       0.0    2807.0      --  g2-g3 f2-g2 g3-f3 g2-g3 
+   --    node count = 28070
+
+Applying this move: Hg2n ef2e Hg3w eg2n
+
+ r r r r - r r r
+ h d c - r c d h
+ - - - - - - - -
+ - - - - - - - -
+ - H - - - - - -
+ - - - - E - e -
+ D - C - M H - D
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      28.4    -300  g3-g4 g4-f4 
+    3       0.0     333.6    -294  g3-g4 g4-f4 f4-e4 
+    4       0.0    3284.1    -294  g3-g4 e7-d7 g4-f4 f4-e4 
+   --       0.0    3284.1      --  g3-g4 e7-d7 g4-f4 f4-e4 
+   --    node count = 32841
+
+Applying this move: eg3n re7w eg4w ef4w
+
+ r r r r - r r r
+ h d c r - c d h
+ H - - - - - - -
+ - - - - - - - -
+ - - - - e - - -
+ - - - - E - - -
+ - D C - M H - D
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      20.8    -294  e4-d4 d7-e7 
+    3       0.0     227.4    -293  e4-d4 d7-d6 d6-d5 
+    4       0.0    2049.9    -293  e4-d4 d7-d6 d6-d5 f8-e8 
+   --       0.0    2049.9      --  e4-d4 d7-d6 d6-d5 f8-e8 
+   --    node count = 20499
+
+Applying this move: ee4w rd7s rd6s rf8w
+
+ r r r r r - r r
+ h d c - - c d h
+ H - - - - - - -
+ - - - r - - - -
+ - - - e - - - -
+ - D - - E - D -
+ - - C - M H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      32.3    -291  e8-e7 e7-d7 
+    3       0.0     390.9    -291  e8-e7 d5-e5 e5-e4 
+    4       0.0    4007.6    -291  e8-e7 d5-e5 e5-e4 e7-d7 
+   --       0.0    4007.6      --  e8-e7 d5-e5 e5-e4 e7-d7 
+   --    node count = 40076
+
+Applying this move: re8s rd5e re5s re7w
+
+ r r r r - - r r
+ h d c r - c d h
+ H - - - - - - -
+ - - - - - - - -
+ - - - e - - - -
+ - D - E M - D -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      23.2    -392  d4-d5 d7-d6 
+    3       0.0     258.7    -391  d4-e4 e4-d4 e3-e4 
+    4       0.0    2332.2    -386  d4-e4 e3-f3 e4-e3 e3-e4 
+   --       0.0    2332.2      --  d4-e4 e3-f3 e4-e3 e3-e4 
+   --    node count = 23322
+
+Applying this move: ed4e Me3e ee4s ee3n
+
+ r r r r - - r r
+ h d c r - c d h
+ - H - E - - - -
+ - - - - - - - -
+ - - - - e - - -
+ - D - - - M D -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      22.7    -386  e4-d4 d7-e7 
+    3       0.0     240.5    -385  f7-e7 e7-e6 e4-e5 
+    4       0.0    2078.8    -385  f7-e7 e7-e6 d7-e7 e4-e5 
+   --       0.0    2078.8      --  f7-e7 e7-e6 d7-e7 e4-e5 
+   --    node count = 20788
+
+Applying this move: cf7w ce7s rd7e ee4n
+
+ r r r r - - r r
+ h d c - - - d h
+ - H - E r - - -
+ - - - - e - - -
+ - - - - - - - -
+ - D - - - M D -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      20.2    -586  c7-d7 c8-c7 
+    3       0.0     215.1    -586  c7-d7 g8-f8 h8-g8 
+    4       0.0    1805.2    -586  c7-d7 g8-f8 h8-g8 f8-f7 
+   --       0.0    1805.2      --  c7-d7 g8-f8 h8-g8 f8-f7 
+   --    node count = 18052
+
+Applying this move: cc7e rg8w rh8w rf8s
+
+ r r r r - - r -
+ h - - c - r d h
+ - H - E r - - -
+ - - - - e - - -
+ - - - - - - - -
+ - D - - - M D -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      35.5    -887  g7-g6 f7-g7 
+    3       0.0     426.4    -887  g7-g6 f7-g7 g8-h8 
+    4       0.0    4098.4    -887  g7-g6 e6-f6 f6-f5 f7-g7 
+   --       0.0    4098.4      --  g7-g6 e6-f6 f6-f5 f7-g7 
+   --    node count = 40984
+
+Applying this move: dg7s re6e rf6s rf7e
+
+ r r r r - - r -
+ h - - - - - r h
+ - H - E - - d -
+ - - - - e r - -
+ - - - - - - - -
+ - D - - - M D -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      39.4   -1088  g8-h8 b8-b7 
+    3       0.0     495.3   -1088  g8-h8 f5-f4 e5-e4 
+    4       0.0    5211.3   -1088  g8-h8 f5-f4 h8-g8 e5-e4 
+   --       0.0    5211.3      --  g8-h8 f5-f4 h8-g8 e5-e4 
+   --    node count = 52113
+
+Applying this move: rg8e rf5s rh8w ee5s
+
+ r r r r - - r -
+ h - - - - - r h
+ - H - E - - d -
+ - - - - - - - -
+ - - - - e - - D
+ - D - - - - M -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      35.1   -1195  h7-h6 b8-b7 
+    3       0.0     402.8   -1194  e4-e5 g6-g5 g5-f5 
+    4       0.0    3619.0   -1194  e4-e5 g8-h8 g6-g5 g5-f5 
+   --       0.0    3619.0      --  e4-e5 g8-h8 g6-g5 g5-f5 
+   --    node count = 36190
+
+Applying this move: ee4n rg8e dg6s dg5w
+
+ r r r r - - - r
+ h - - - - - r h
+ - H - E - - - -
+ - - - - e - - -
+ - - - - - d - D
+ - D - - - M - -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      22.7   -1188  h8-g8 e5-e4 
+    3       0.0     233.7   -1188  h8-g8 g8-h8 e5-e4 
+    4       0.0    1882.4   -1188  h8-g8 g7-g6 g8-g7 e5-e4 
+   --       0.0    1882.4      --  h8-g8 g7-g6 g8-g7 e5-e4 
+   --    node count = 18824
+
+Applying this move: rh8w rg7s rg8s ee5s
+
+ r r r r - - - -
+ h - - - - - r h
+ - H - E - - r -
+ - - - - - - - -
+ - - - - e - - -
+ - D - - M - D -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      26.4   -1496  h7-h6 g7-h7 
+    3       0.0     287.3   -1491  e3-f3 e4-e3 e3-e4 
+    4       0.0    2510.2   -1491  e3-f3 e4-e3 g6-h6 e3-e4 
+   --       0.0    2510.2      --  e3-f3 e4-e3 g6-h6 e3-e4 
+   --    node count = 25102
+
+Applying this move: Me3e ee4s rg6e ee3n
+
+ r - r r - - - -
+ h r - - - - r h
+ - H - E - - - r
+ - - - - - - - -
+ - - - - e - - -
+ - D - - - M D -
+ - - C R - H - -
+ R R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      27.9   -1491  c8-c7 c7-d7 
+    3       0.0     297.0   -1491  c8-c7 h6-g6 c7-d7 
+    4       0.0    2632.8   -1490  h6-g6 g6-g5 g5-f5 f5-f4 
+   --       0.0    2632.8      --  h6-g6 g6-g5 g5-f5 f5-f4 
+   --    node count = 26328
+
+Applying this move: rh6w rg6s rg5w rf5s
+
+ r - r r - - - -
+ h - - - - - r h
+ - H - E - - - -
+ - - - - - - - -
+ - - - - e r - -
+ - D - - - M D -
+ - - C R - H - -
+ R R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      25.3   -1591  g7-g6 g6-h6 
+    3       0.0     260.7   -1591  c8-b8 d8-c8 a7-b7 
+    4       0.0    2044.9   -1591  c8-b8 g7-g6 g6-h6 d8-c8 
+   --       0.0    2044.9      --  c8-b8 g7-g6 g6-h6 d8-c8 
+   --    node count = 20449
+
+Applying this move: rc8w rg7s rg6e rd8w
+
+ r r r - - - - -
+ h - - - - - - h
+ - H - E - - - r
+ - - - - - - - -
+ - - - - e - - -
+ - D - - M - D -
+ - - C - R H - -
+ R R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      18.0   -1698  e4-d4 e3-e4 
+    3       0.0     166.4   -1693  e3-f3 e4-e3 e3-e4 
+    4       0.0    1242.0   -1693  e3-f3 e4-e3 e3-e4 e2-e3 
+   --       0.0    1242.0      --  e3-f3 e4-e3 e3-e4 e2-e3 
+   --    node count = 12420
+
+Applying this move: Me3e ee4s ee3n Re2n
+
+ r r r - - - - -
+ h - - - - - - h
+ - H - - E - - r
+ - - - - - - - -
+ R - - - e - - -
+ - D - - R M D -
+ - - C - - H - -
+ - R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      17.8   -1691  e4-d4 e3-e4 
+    3       0.0     162.8   -1691  e4-d4 e3-e4 a7-b7 
+    4       0.0    1197.5   -1691  e4-d4 e3-e4 d4-d5 e4-d4 
+   --       0.0    1197.5      --  e4-d4 e3-e4 d4-d5 e4-d4 
+   --    node count = 11975
+
+Applying this move: ee4w Re3n ed4n Re4w
+
+ r r r - - - - -
+ h - H - - - - h
+ R - - - E - - r
+ - - - e - - - -
+ - - - R - - - -
+ - D - - - M D -
+ - - C - - H - -
+ - R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      13.7   -1694  d4-e4 d5-d4 
+    3       0.0     119.4   -1693  a6-a5 a7-a6 a8-a7 
+    4       0.0     886.5   -1303  d5-d6 d6-d7 c7-c6 d7-c7 
+   --       0.0     886.5      --  d5-d6 d6-d7 c7-c6 d7-c7 
+   --    node count = 8865
+
+Applying this move: ed5n ed6n Hc7s Hc6x ed7w
+
+ r r r - - - - -
+ h - e - - - - h
+ R - - E R - - r
+ - - - - - - - -
+ - - - - - - - -
+ - D - - - M D -
+ - - C - - H - -
+ - R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      12.2   -1308  c7-d7 c8-c7 
+    3       0.0     100.3   -1307  a6-a5 a7-a6 a8-a7 
+    4       0.0     669.6   -1200  c7-d7 d7-e7 e6-f6 e7-e6 
+   --       0.0     669.6      --  c7-d7 d7-e7 e6-f6 e7-e6 
+   --    node count = 6696
+
+Applying this move: ec7e ed7e Re6e Rf6x ee7s
+
+ r r r - - - - -
+ h - - - - - - h
+ R E - - e - - r
+ - - - - - - - -
+ - - - - - - - -
+ - D - - - M D -
+ - - C - - H - -
+ - R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      16.7   -1192  e6-d6 d6-d5 
+    3       0.0     145.8   -1190  a6-a5 a7-a6 e6-e5 
+    4       0.0    1063.3   -1189  a6-a5 a7-a6 a8-a7 e6-e5 
+   --       0.0    1063.3      --  a6-a5 a7-a6 a8-a7 e6-e5 
+   --    node count = 10633
+
+Applying this move: Ra6s ha7s ra8s ee6s
+
+ - r r - - - - -
+ r - - - - - - h
+ - E - - - - - r
+ R - - - e - - -
+ - - - - - - - -
+ - D - - - M D -
+ - - C - - H - -
+ - R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      21.5   -1590  e5-d5 a7-b7 
+    3       0.0     193.1   -1590  e5-d5 a7-b7 b7-c7 
+    4       0.0    1340.6   -1590  e5-d5 h6-h5 a7-b7 h7-h6 
+   --       0.0    1340.6      --  e5-d5 h6-h5 a7-b7 h7-h6 
+   --    node count = 13406
+
+Applying this move: ee5w rh6s ra7e hh7s
+
+ - r r - - - - -
+ - - - - - - - -
+ - E - - - - - h
+ R - - e - - - r
+ - - - - - - - -
+ - D - - - M D -
+ - - C - - H - -
+ - R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      16.6   -1691  b8-b7 c8-c7 
+    3       0.0     140.1   -1691  b8-b7 c8-c7 d5-d4 
+    4       0.0     920.9   -1691  b8-b7 h5-h4 c8-c7 h6-h5 
+   --       0.0     920.9      --  b8-b7 h5-h4 c8-c7 h6-h5 
+   --    node count = 9209
+
+Applying this move: rb8s rh5s rc8s hh6s
+
+ r r r r r r r r
+ d h c e m c h d
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ H D C M E C D H
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      10.8       9  e2-e3 e3-e4 
+    3       0.0     118.4       9  e2-e3 e1-e2 e3-e4 
+    4       0.0    1009.5      10  e2-e3 e1-e2 e3-e4 e2-e3 
+   --       0.0    1009.5      --  e2-e3 e1-e2 e3-e4 e2-e3 
+   --    node count = 10095
+
+Applying this move: Ee2n Re1n Ee3n Re2n
+
+ r r r r r r r r
+ d - c - m c - d
+ - h - - - - h -
+ - - - e - - - -
+ - - - - E - - -
+ - - - - R - - -
+ H D C M - C D H
+ R R R R - R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      31.0       3  g2-g3 g1-g2 
+    3       0.0     402.4       3  g2-g3 g1-g2 h1-g1 
+    4       0.0    4496.7       3  g2-g3 g1-g2 h1-g1 f1-e1 
+   --       0.0    4496.7      --  g2-g3 g1-g2 h1-g1 f1-e1 
+   --    node count = 44967
+
+Applying this move: Dg2n Rg1n Rh1w Rf1w
+
+ r r r r r r r r
+ - - c - m c d -
+ d h - - - - h -
+ - - - - - - - -
+ - - - - E - - -
+ - - - e R - D -
+ H D C M - C R H
+ R R R R R - R -
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      41.1       7  g1-h1 e1-f1 
+    3       0.0     498.2       7  g1-h1 h1-g1 g1-f1 
+    4       0.0    4897.1       7  g1-h1 h1-g1 g1-h1 e1-f1 
+   --       0.0    4897.1      --  g1-h1 h1-g1 g1-h1 e1-f1 
+   --    node count = 48971
+
+Applying this move: Rg1e Rh1w Rg1e Re1e
+
+ r r r r r r r r
+ - - c - m c d -
+ d h - - - - h -
+ - - - - - - - -
+ - - - - E - - -
+ - - - - R - D -
+ H D e - M C R H
+ R R R R - R - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      39.3    -190  d1-e1 h1-g1 
+    3       0.0     486.7    -190  d1-e1 h1-g1 e1-d1 
+    4       0.0    4932.0    -190  d1-e1 h1-g1 g1-h1 f1-g1 
+   --       0.0    4932.0      --  d1-e1 h1-g1 g1-h1 f1-g1 
+   --    node count = 49320
+
+Applying this move: Rd1e Rh1w Rg1e Rf1e
+
+ r r r r r r r r
+ - - c - m c d -
+ d h - - - - h -
+ - - - - - - - -
+ - - - - E - - -
+ - e - - R - D -
+ H - - - M C R H
+ R R R - R - R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      43.3    -491  g1-f1 h1-g1 
+    3       0.0     554.6    -491  g1-f1 h1-g1 e1-d1 
+    4       0.0    5939.0    -491  g1-f1 h1-g1 g1-h1 e1-d1 
+   --       0.0    5939.0      --  g1-f1 h1-g1 g1-h1 e1-d1 
+   --    node count = 59390
+
+Applying this move: Rg1w Rh1w Rg1e Re1w
+
+ r r r - r r r r
+ - - c r m c d -
+ d h - - - - h -
+ - - - - - - - -
+ - - - - E - - -
+ - - - - R - D -
+ H R e - M C R H
+ R - R R - R - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      46.7    -491  h2-h3 h1-g1 
+    3       0.0     708.1    -491  h2-h3 h1-g1 f1-e1 
+    4       0.0    9884.6    -491  h2-h3 h1-g1 g1-h1 h1-h2 
+   --       0.0    9884.6      --  h2-h3 h1-g1 g1-h1 h1-h2 
+   --    node count = 98846
+
+Applying this move: Hh2n Rh1w Rg1e Rh1n
+
+ r r r - r r r r
+ - - c r m c d -
+ d h - - - - h -
+ - - - - - - - -
+ - - - - E - - -
+ - - - - R - D H
+ H R e - M C R R
+ R - - R - R - -
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      39.3    -592  d1-c1 a1-b1 
+    3       0.0     492.9    -592  d1-c1 f1-g1 a1-b1 
+    4       0.0    4967.9    -592  d1-c1 f1-g1 g1-h1 a1-b1 
+   --       0.0    4967.9      --  d1-c1 f1-g1 g1-h1 a1-b1 
+   --    node count = 49679
+
+Applying this move: Rd1w Rf1e Rg1e Ra1e
+
+ r r r - r r r r
+ - - c r m c d -
+ d h - - - - h -
+ - - - - - - - -
+ - - - - E - - -
+ - e - - R - D H
+ H - - - M C R R
+ - R R - - - - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      44.0    -693  h1-g1 a2-a1 
+    3       0.0     575.9    -693  h1-g1 g1-h1 a2-a1 
+    4       0.0    6435.0    -693  h1-g1 g1-h1 h1-g1 a2-a1 
+   --       0.0    6435.0      --  h1-g1 g1-h1 h1-g1 a2-a1 
+   --    node count = 64350
+
+Applying this move: Rh1w Rg1e Rh1w Ha2s
+
+ r r r - r r r r
+ - - c r m c d -
+ - h - - - - h -
+ d - - - - - - -
+ - - - - E - - -
+ - - - - R - D H
+ - R e - M C R R
+ H - R - - - R -
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      29.2    -691  g1-f1 a1-b1 
+    3       0.0     331.0    -691  g1-f1 f1-g1 a1-b1 
+    4       0.0    2999.2    -691  g1-f1 f1-g1 g1-h1 a1-b1 
+   --       0.0    2999.2      --  g1-f1 f1-g1 g1-h1 a1-b1 
+   --    node count = 29992
+
+Applying this move: Rg1w Rf1e Rg1e Ha1e
+
+ r r r - r r r r
+ - - c r m c d -
+ - h - - - - h -
+ d - - - - - - -
+ - - - - E - - -
+ - - - - R - D H
+ - - e - M C R R
+ - H R - - - - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      29.3    -792  g3-g4 g2-g3 
+    3       0.0     336.6    -792  g3-g4 h1-g1 g4-g3 
+    4       0.0    3150.0    -792  g3-g4 h1-g1 g1-h1 g2-g3 
+   --       0.0    3150.0      --  g3-g4 h1-g1 g1-h1 g2-g3 
+   --    node count = 31500
+
+Applying this move: Dg3n Rh1w Rg1e Rg2n
+
+ r r r - r r r r
+ - - c r m c d -
+ - h - - - - h -
+ d - - - - - - -
+ - - - - E - D -
+ - - - - R - R H
+ - - e - M C - R
+ - H - - - - - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      42.2    -894  h1-g1 g1-f1 
+    3       0.0     510.7    -894  h1-g1 g1-h1 f2-g2 
+    4       0.0    5098.2    -893  e2-e1 f2-g2 b1-c1 e1-d1 
+   --       0.0    5098.2      --  e2-e1 f2-g2 b1-c1 e1-d1 
+   --    node count = 50982
+
+Applying this move: Me2s Cf2e Hb1e Me1w
+
+ r r r - r r r r
+ - - c r m c d -
+ - h - - - - h -
+ d - - - - - - -
+ - - - - E - D -
+ - - - - R - R H
+ - - e - - - C R
+ - - - M - - - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      27.7   -1294  d1-e1 e1-e2 
+    3       0.0     292.3   -1294  d1-e1 h1-g1 g1-f1 
+    4       0.0    2406.0   -1294  d1-e1 h1-g1 g1-h1 e1-e2 
+   --       0.0    2406.0      --  d1-e1 h1-g1 g1-h1 e1-e2 
+   --    node count = 24060
+
+Applying this move: Md1e Rh1w Rg1e Me1n
+
+ - - r - r r r r
+ r - c r m c d -
+ - r - - - - h -
+ d h - - - - - -
+ - - - - E - D -
+ - - - - R - R H
+ - - e - M - C R
+ - - - - - - - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      27.9   -1295  g4-f4 h1-g1 
+    3       0.0     293.5   -1295  g4-f4 h1-g1 g3-g4 
+    4       0.0    2537.9   -1295  g4-f4 h1-g1 g1-h1 g3-g4 
+   --       0.0    2537.9      --  g4-f4 h1-g1 g1-h1 g3-g4 
+   --    node count = 25379
+
+Applying this move: Dg4w Rh1w Rg1e Rg3n
+
+ - - r - r r r r
+ r - c r m c d -
+ - r - - - - h -
+ - h - - - - - -
+ d - - - E D R -
+ - - - e R - - H
+ - - - M - - C R
+ - - - - - - - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      19.1   -1298  g2-f2 f2-e2 
+    3       0.0     178.5   -1298  g2-f2 g4-h4 f2-e2 
+    4       0.0    1294.9   -1298  g2-f2 h1-g1 g1-h1 f2-e2 
+   --       0.0    1294.9      --  g2-f2 h1-g1 g1-h1 f2-e2 
+   --    node count = 12949
+
+Applying this move: Cg2w Rh1w Rg1e Cf2w
+
+ - - r - r r r r
+ r - c r m c d -
+ - r - - - - h -
+ - h - - - - - -
+ d - - - E D R -
+ - - - e - - - H
+ - - - M C - - R
+ - - - - - - - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      28.3   -1399  h2-g2 h1-h2 
+    3       0.0     321.3   -1399  h2-g2 h1-g1 g4-h4 
+    4       0.0    2957.2   -1399  h2-g2 h1-g1 g1-h1 h1-h2 
+   --       0.0    2957.2      --  h2-g2 h1-g1 g1-h1 h1-h2 
+   --    node count = 29572
+
+Applying this move: Rh2w Rh1w Rg1e Rh1n
+
+ - - r - r r r r
+ r - c r m c d -
+ - r - - - - h -
+ - h - - - - - -
+ d - - - E D R -
+ - - - e - - - H
+ - - - - C - R R
+ - - - - - - - -
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      23.4   -1900  g2-g3 e2-e3 
+    3       0.0     234.1   -1900  g2-g3 h2-g2 g2-f2 
+    4       0.0    1859.9   -1900  g2-g3 h2-g2 g2-h2 e2-e3 
+   --       0.0    1859.9      --  g2-g3 h2-g2 g2-h2 e2-e3 
+   --    node count = 18599
+
+Applying this move: Rg2n Rh2w Rg2e Ce2n
+
+ - - r - r r r r
+ - - c r m c d -
+ - r - - - - h -
+ - h - - - - - -
+ r d - - E D R -
+ - - - e C - R H
+ - - - - - - - R
+ - - - - - - - -
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      14.3   -1904  f4-f5 g4-f4 
+    3       0.0     126.7   -1904  f4-f5 h2-g2 g4-f4 
+    4       0.0     892.5   -1904  f4-f5 h2-g2 g2-h2 g4-f4 
+   --       0.0     892.5      --  f4-f5 h2-g2 g2-h2 g4-f4 
+   --    node count = 8925
+
+Applying this move: Df4n Rh2w Rg2e Rg4w
+
+ r r r r r r r r
+ h d c m e c d h
+ - - - - E - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ D H C M - C H D
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0       8.2      -3  a7-a6 a8-a7 
+    3       0.0      80.0      -3  a7-a6 a8-a7 b8-a8 
+    4       0.0     614.6       1  d7-d6 e7-d7 d6-d5 d7-d6 
+   --       0.0     614.6      --  d7-d6 e7-d7 d6-d5 d7-d6 
+   --    node count = 6146
+
+Applying this move: md7s ee7w md6s ed7s
+
+ r r r r r r r r
+ h d c - - c d h
+ - - - e - - - -
+ - - - E - - - -
+ - - - m - - - -
+ - H - - - - - -
+ D - C M - C H D
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      20.5       0  d6-e6 e6-e5 
+    3       0.0     225.6       2  d6-e6 e6-e5 e5-e4 
+    4       0.0    2019.3       2  d6-e6 e8-e7 e6-e5 e5-e4 
+   --       0.0    2019.3      --  d6-e6 e8-e7 e6-e5 e5-e4 
+   --    node count = 20193
+
+Applying this move: ed6e re8s ee6s ee5s
+
+ r r r r - r r r
+ h d c - r c d h
+ - - - - - - - -
+ - - - - - - - -
+ - - E - e - - -
+ - H - - - - - -
+ D - C M - C H D
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      29.2    -493  e7-e6 e6-e5 
+    3       0.0     348.7    -493  e7-e6 e6-e5 f8-e8 
+    4       0.0    3443.8    -303  e4-e3 e3-e2 f2-f3 e2-f2 
+   --       0.0    3443.8      --  e4-e3 e3-e2 f2-f3 e2-f2 
+   --    node count = 34438
+
+Applying this move: ee4s ee3s Cf2n Cf3x ee2e
+
+ r r r r - r r r
+ h d c - r c d h
+ - - - - - - - -
+ - - - - - - - -
+ - H - - - - - -
+ - - - - E - - -
+ D - C M - e H D
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      23.8    -302  g2-g3 f2-g2 
+    3       0.0     276.4    -302  g2-g3 f2-g2 e7-d7 
+    4       0.0    2666.2    -297  g2-g3 f2-g2 g3-f3 g2-g3 
+   --       0.0    2666.2      --  g2-g3 f2-g2 g3-f3 g2-g3 
+   --    node count = 26662
+
+Applying this move: Hg2n ef2e Hg3w eg2n
+
+ r r r r - r r r
+ h d c - r c d h
+ - - - - - - - -
+ - - - - - - - -
+ - H - - - - - -
+ - - - - E - e -
+ D - C - M H - D
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      28.4    -300  g3-g4 g4-f4 
+    3       0.0     337.6    -294  g3-g4 g4-f4 f4-e4 
+    4       0.0    3252.0    -294  g3-g4 e7-d7 g4-f4 f4-e4 
+   --       0.0    3252.0      --  g3-g4 e7-d7 g4-f4 f4-e4 
+   --    node count = 32520
+
+Applying this move: eg3n re7w eg4w ef4w
+
+ r r r r - r r r
+ h d c r - c d h
+ H - - - - - - -
+ - - - - - - - -
+ - - - - e - - -
+ - - - - E - - -
+ - D C - M H - D
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      20.8    -294  e4-d4 d7-e7 
+    3       0.0     228.8    -293  e4-d4 d7-d6 d6-d5 
+    4       0.0    2133.7    -293  e4-d4 d7-d6 d6-d5 f8-e8 
+   --       0.0    2133.7      --  e4-d4 d7-d6 d6-d5 f8-e8 
+   --    node count = 21337
+
+Applying this move: ee4w rd7s rd6s rf8w
+
+ r r r r r - r r
+ h d c - - c d h
+ H - - - - - - -
+ - - - r - - - -
+ - - - e - - - -
+ - D - - E - D -
+ - - C - M H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      32.3    -291  e8-e7 e7-d7 
+    3       0.0     390.9    -291  e8-e7 d5-e5 e5-e4 
+    4       0.0    3945.2    -291  e8-e7 d5-e5 e5-e4 e7-d7 
+   --       0.0    3945.2      --  e8-e7 d5-e5 e5-e4 e7-d7 
+   --    node count = 39452
+
+Applying this move: re8s rd5e re5s re7w
+
+ r r r r - - r r
+ h d c r - c d h
+ H - - - - - - -
+ - - - - - - - -
+ - - - e - - - -
+ - D - E M - D -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      23.2    -392  d4-d5 d7-d6 
+    3       0.0     257.0    -391  d4-e4 e4-d4 e3-e4 
+    4       0.0    2337.0    -386  d4-e4 e3-f3 e4-e3 e3-e4 
+   --       0.0    2337.0      --  d4-e4 e3-f3 e4-e3 e3-e4 
+   --    node count = 23370
+
+Applying this move: ed4e Me3e ee4s ee3n
+
+ r r r r - - r r
+ h d c r - c d h
+ - H - E - - - -
+ - - - - - - - -
+ - - - - e - - -
+ - D - - - M D -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      22.7    -386  e4-d4 d7-e7 
+    3       0.0     238.9    -385  f7-e7 e7-e6 e4-e5 
+    4       0.0    2042.8    -385  f7-e7 e7-e6 d7-e7 e4-e5 
+   --       0.0    2042.8      --  f7-e7 e7-e6 d7-e7 e4-e5 
+   --    node count = 20428
+
+Applying this move: cf7w ce7s rd7e ee4n
+
+ r r r r - - r r
+ h d c - - - d h
+ - H - E r - - -
+ - - - - e - - -
+ - - - - - - - -
+ - D - - - M D -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      20.2    -586  c7-d7 c8-c7 
+    3       0.0     212.4    -586  c7-d7 g8-f8 h8-g8 
+    4       0.0    1751.0    -586  c7-d7 g8-f8 h8-g8 f8-f7 
+   --       0.0    1751.0      --  c7-d7 g8-f8 h8-g8 f8-f7 
+   --    node count = 17510
+
+Applying this move: cc7e rg8w rh8w rf8s
+
+ r r r r - - r -
+ h - - c - r d h
+ - H - E r - - -
+ - - - - e - - -
+ - - - - - - - -
+ - D - - - M D -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      35.5    -887  g7-g6 f7-g7 
+    3       0.0     434.5    -887  g7-g6 f7-g7 g8-h8 
+    4       0.0    4480.1    -887  g7-g6 e6-f6 f6-f5 f7-g7 
+   --       0.0    4480.1      --  g7-g6 e6-f6 f6-f5 f7-g7 
+   --    node count = 44801
+
+Applying this move: dg7s re6e rf6s rf7e
+
+ r r r r - - r -
+ h - - - - - r h
+ - H - E - - d -
+ - - - - e r - -
+ - - - - - - - -
+ - D - - - M D -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      39.4   -1088  g8-h8 b8-b7 
+    3       0.0     481.1   -1088  g8-h8 f5-f4 e5-e4 
+    4       0.0    4645.7   -1088  g8-h8 f5-f4 h8-g8 e5-e4 
+   --       0.0    4645.7      --  g8-h8 f5-f4 h8-g8 e5-e4 
+   --    node count = 46457
+
+Applying this move: rg8e rf5s rh8w ee5s
+
+ r r r r - - r -
+ h - - - - - r h
+ - H - E - - d -
+ - - - - - - - -
+ - - - - e - - D
+ - D - - - - M -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      35.1   -1195  h7-h6 b8-b7 
+    3       0.0     408.6   -1194  e4-e5 g6-g5 g5-f5 
+    4       0.0    3853.8   -1194  e4-e5 g8-h8 g6-g5 g5-f5 
+   --       0.0    3853.8      --  e4-e5 g8-h8 g6-g5 g5-f5 
+   --    node count = 38538
+
+Applying this move: ee4n rg8e dg6s dg5w
+
+ r r r r - - - r
+ h - - - - - r h
+ - H - E - - - -
+ - - - - e - - -
+ - - - - - d - D
+ - D - - - M - -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      22.7   -1188  h8-g8 e5-e4 
+    3       0.0     233.7   -1188  h8-g8 g8-h8 e5-e4 
+    4       0.0    1909.9   -1188  h8-g8 g7-g6 g8-g7 e5-e4 
+   --       0.0    1909.9      --  h8-g8 g7-g6 g8-g7 e5-e4 
+   --    node count = 19099
+
+Applying this move: rh8w rg7s rg8s ee5s
+
+ r r r r - - - -
+ h - - - - - r h
+ - H - E - - r -
+ - - - - - - - -
+ - - - - e - - -
+ - D - - M - D -
+ - - C - - H - -
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      26.4   -1496  h7-h6 g7-h7 
+    3       0.0     287.3   -1491  e3-f3 e4-e3 e3-e4 
+    4       0.0    2488.7   -1491  e3-f3 e4-e3 g6-h6 e3-e4 
+   --       0.0    2488.7      --  e3-f3 e4-e3 g6-h6 e3-e4 
+   --    node count = 24887
+
+Applying this move: Me3e ee4s rg6e ee3n
+
+ r - r r - - - -
+ h r - - - - r h
+ - H - E - - - r
+ - - - - - - - -
+ - - - - e - - -
+ - D - - - M D -
+ - - C R - H - -
+ R R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      27.9   -1491  c8-c7 c7-d7 
+    3       0.0     292.4   -1491  c8-c7 h6-g6 c7-d7 
+    4       0.0    2355.2   -1490  h6-g6 g6-g5 g5-f5 f5-f4 
+   --       0.0    2355.2      --  h6-g6 g6-g5 g5-f5 f5-f4 
+   --    node count = 23552
+
+Applying this move: rh6w rg6s rg5w rf5s
+
+ r - r r - - - -
+ h - - - - - r h
+ - H - E - - - -
+ - - - - - - - -
+ - - - - e r - -
+ - D - - - M D -
+ - - C R - H - -
+ R R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      25.3   -1591  g7-g6 g6-h6 
+    3       0.0     260.7   -1591  c8-b8 d8-c8 a7-b7 
+    4       0.0    2083.9   -1591  c8-b8 g7-g6 g6-h6 d8-c8 
+   --       0.0    2083.9      --  c8-b8 g7-g6 g6-h6 d8-c8 
+   --    node count = 20839
+
+Applying this move: rc8w rg7s rg6e rd8w
+
+ r r r - - - - -
+ h - - - - - - h
+ - H - E - - - r
+ - - - - - - - -
+ - - - - e - - -
+ - D - - M - D -
+ - - C - R H - -
+ R R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      18.0   -1698  e4-d4 e3-e4 
+    3       0.0     167.9   -1693  e3-f3 e4-e3 e3-e4 
+    4       0.0    1259.4   -1693  e3-f3 e4-e3 e3-e4 e2-e3 
+   --       0.0    1259.4      --  e3-f3 e4-e3 e3-e4 e2-e3 
+   --    node count = 12594
+
+Applying this move: Me3e ee4s ee3n Re2n
+
+ r r r - - - - -
+ h - - - - - - h
+ - H - - E - - r
+ - - - - - - - -
+ R - - - e - - -
+ - D - - R M D -
+ - - C - - H - -
+ - R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      17.8   -1691  e4-d4 e3-e4 
+    3       0.0     165.5   -1691  e4-d4 e3-e4 a7-b7 
+    4       0.0    1220.8   -1691  e4-d4 e3-e4 d4-d5 e4-d4 
+   --       0.0    1220.8      --  e4-d4 e3-e4 d4-d5 e4-d4 
+   --    node count = 12208
+
+Applying this move: ee4w Re3n ed4n Re4w
+
+ r r r - - - - -
+ h - H - - - - h
+ R - - - E - - r
+ - - - e - - - -
+ - - - R - - - -
+ - D - - - M D -
+ - - C - - H - -
+ - R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      13.7   -1694  d4-e4 d5-d4 
+    3       0.0     119.4   -1693  a6-a5 a7-a6 a8-a7 
+    4       0.0     871.4   -1303  d5-d6 d6-d7 c7-c6 d7-c7 
+   --       0.0     871.4      --  d5-d6 d6-d7 c7-c6 d7-c7 
+   --    node count = 8714
+
+Applying this move: ed5n ed6n Hc7s Hc6x ed7w
+
+ r r r - - - - -
+ h - e - - - - h
+ R - - E R - - r
+ - - - - - - - -
+ - - - - - - - -
+ - D - - - M D -
+ - - C - - H - -
+ - R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      12.2   -1308  c7-d7 c8-c7 
+    3       0.0     100.3   -1307  a6-a5 a7-a6 a8-a7 
+    4       0.0     669.4   -1200  c7-d7 d7-e7 e6-f6 e7-e6 
+   --       0.0     669.4      --  c7-d7 d7-e7 e6-f6 e7-e6 
+   --    node count = 6694
+
+Applying this move: ec7e ed7e Re6e Rf6x ee7s
+
+ r r r - - - - -
+ h - - - - - - h
+ R E - - e - - r
+ - - - - - - - -
+ - - - - - - - -
+ - D - - - M D -
+ - - C - - H - -
+ - R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      16.7   -1192  e6-d6 d6-d5 
+    3       0.0     145.8   -1190  a6-a5 a7-a6 e6-e5 
+    4       0.0    1047.7   -1189  a6-a5 a7-a6 a8-a7 e6-e5 
+   --       0.0    1047.7      --  a6-a5 a7-a6 a8-a7 e6-e5 
+   --    node count = 10477
+
+Applying this move: Ra6s ha7s ra8s ee6s
+
+ - r r - - - - -
+ r - - - - - - h
+ - E - - - - - r
+ R - - - e - - -
+ - - - - - - - -
+ - D - - - M D -
+ - - C - - H - -
+ - R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      21.5   -1590  e5-d5 a7-b7 
+    3       0.0     193.1   -1590  e5-d5 a7-b7 b7-c7 
+    4       0.0    1307.9   -1590  e5-d5 h6-h5 a7-b7 h7-h6 
+   --       0.0    1307.9      --  e5-d5 h6-h5 a7-b7 h7-h6 
+   --    node count = 13079
+
+Applying this move: ee5w rh6s ra7e hh7s
+
+ - r r - - - - -
+ - - - - - - - -
+ - E - - - - - h
+ R - - e - - - r
+ - - - - - - - -
+ - D - - - M D -
+ - - C - - H - -
+ - R R - R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      16.6   -1691  b8-b7 c8-c7 
+    3       0.0     140.1   -1691  b8-b7 c8-c7 d5-d4 
+    4       0.0     910.3   -1691  b8-b7 h5-h4 c8-c7 h6-h5 
+   --       0.0     910.3      --  b8-b7 h5-h4 c8-c7 h6-h5 
+   --    node count = 9103
+
+Applying this move: rb8s rh5s rc8s hh6s
+
+ r r r r r r r r
+ d h c e m c h d
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ - - - - - - - -
+ H D C M E C D H
+ R R R R R R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      10.8       9  e2-e3 e3-e4 
+    3       0.0     118.4       9  e2-e3 e1-e2 e3-e4 
+    4       0.0    1014.3      10  e2-e3 e1-e2 e3-e4 e2-e3 
+   --       0.0    1014.3      --  e2-e3 e1-e2 e3-e4 e2-e3 
+   --    node count = 10143
+
+Applying this move: Ee2n Re1n Ee3n Re2n
+
+ r r r r r r r r
+ d - c - m c - d
+ - h - - - - h -
+ - - - e - - - -
+ - - - - E - - -
+ - - - - R - - -
+ H D C M - C D H
+ R R R R - R R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      31.0       3  g2-g3 g1-g2 
+    3       0.0     398.4       3  g2-g3 g1-g2 h1-g1 
+    4       0.0    4239.5       3  g2-g3 g1-g2 h1-g1 f1-e1 
+   --       0.0    4239.5      --  g2-g3 g1-g2 h1-g1 f1-e1 
+   --    node count = 42395
+
+Applying this move: Dg2n Rg1n Rh1w Rf1w
+
+ r r r r r r r r
+ - - c - m c d -
+ d h - - - - h -
+ - - - - - - - -
+ - - - - E - - -
+ - - - e R - D -
+ H D C M - C R H
+ R R R R R - R -
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      41.1       7  g1-h1 e1-f1 
+    3       0.0     559.9       7  g1-h1 h1-g1 g1-f1 
+    4       0.0    6895.6       7  g1-h1 h1-g1 g1-h1 e1-f1 
+   --       0.0    6895.6      --  g1-h1 h1-g1 g1-h1 e1-f1 
+   --    node count = 68956
+
+Applying this move: Rg1e Rh1w Rg1e Re1e
+
+ r r r r r r r r
+ - - c - m c d -
+ d h - - - - h -
+ - - - - - - - -
+ - - - - E - - -
+ - - - - R - D -
+ H D e - M C R H
+ R R R R - R - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      39.3    -190  d1-e1 h1-g1 
+    3       0.0     492.5    -190  d1-e1 h1-g1 e1-d1 
+    4       0.0    5098.0    -190  d1-e1 h1-g1 g1-h1 f1-g1 
+   --       0.0    5098.0      --  d1-e1 h1-g1 g1-h1 f1-g1 
+   --    node count = 50980
+
+Applying this move: Rd1e Rh1w Rg1e Rf1e
+
+ r r r r r r r r
+ - - c - m c d -
+ d h - - - - h -
+ - - - - - - - -
+ - - - - E - - -
+ - e - - R - D -
+ H - - - M C R H
+ R R R - R - R R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      43.3    -491  g1-f1 h1-g1 
+    3       0.0     558.1    -491  g1-f1 h1-g1 e1-d1 
+    4       0.0    6189.3    -491  g1-f1 h1-g1 g1-h1 e1-d1 
+   --       0.0    6189.3      --  g1-f1 h1-g1 g1-h1 e1-d1 
+   --    node count = 61893
+
+Applying this move: Rg1w Rh1w Rg1e Re1w
+
+ r r r - r r r r
+ - - c r m c d -
+ d h - - - - h -
+ - - - - - - - -
+ - - - - E - - -
+ - - - - R - D -
+ H R e - M C R H
+ R - R R - R - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      46.7    -491  h2-h3 h1-g1 
+    3       0.0     636.2    -491  h2-h3 h1-g1 f1-e1 
+    4       0.0    7145.5    -491  h2-h3 h1-g1 g1-h1 h1-h2 
+   --       0.0    7145.5      --  h2-h3 h1-g1 g1-h1 h1-h2 
+   --    node count = 71455
+
+Applying this move: Hh2n Rh1w Rg1e Rh1n
+
+ r r r - r r r r
+ - - c r m c d -
+ d h - - - - h -
+ - - - - - - - -
+ - - - - E - - -
+ - - - - R - D H
+ H R e - M C R R
+ R - - R - R - -
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      39.3    -592  d1-c1 a1-b1 
+    3       0.0     494.7    -592  d1-c1 f1-g1 a1-b1 
+    4       0.0    5242.0    -592  d1-c1 f1-g1 g1-h1 a1-b1 
+   --       0.0    5242.0      --  d1-c1 f1-g1 g1-h1 a1-b1 
+   --    node count = 52420
+
+Applying this move: Rd1w Rf1e Rg1e Ra1e
+
+ r r r - r r r r
+ - - c r m c d -
+ d h - - - - h -
+ - - - - - - - -
+ - - - - E - - -
+ - e - - R - D H
+ H - - - M C R R
+ - R R - - - - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      44.0    -693  h1-g1 a2-a1 
+    3       0.0     573.8    -693  h1-g1 g1-h1 a2-a1 
+    4       0.0    6233.1    -693  h1-g1 g1-h1 h1-g1 a2-a1 
+   --       0.0    6233.1      --  h1-g1 g1-h1 h1-g1 a2-a1 
+   --    node count = 62331
+
+Applying this move: Rh1w Rg1e Rh1w Ha2s
+
+ r r r - r r r r
+ - - c r m c d -
+ - h - - - - h -
+ d - - - - - - -
+ - - - - E - - -
+ - - - - R - D H
+ - R e - M C R R
+ H - R - - - R -
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      29.2    -691  g1-f1 a1-b1 
+    3       0.0     332.6    -691  g1-f1 f1-g1 a1-b1 
+    4       0.0    3051.3    -691  g1-f1 f1-g1 g1-h1 a1-b1 
+   --       0.0    3051.3      --  g1-f1 f1-g1 g1-h1 a1-b1 
+   --    node count = 30513
+
+Applying this move: Rg1w Rf1e Rg1e Ha1e
+
+ r r r - r r r r
+ - - c r m c d -
+ - h - - - - h -
+ d - - - - - - -
+ - - - - E - - -
+ - - - - R - D H
+ - - e - M C R R
+ - H R - - - - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      29.3    -792  g3-g4 g2-g3 
+    3       0.0     334.3    -792  g3-g4 h1-g1 g4-g3 
+    4       0.0    2995.9    -792  g3-g4 h1-g1 g1-h1 g2-g3 
+   --       0.0    2995.9      --  g3-g4 h1-g1 g1-h1 g2-g3 
+   --    node count = 29959
+
+Applying this move: Dg3n Rh1w Rg1e Rg2n
+
+ r r r - r r r r
+ - - c r m c d -
+ - h - - - - h -
+ d - - - - - - -
+ - - - - E - D -
+ - - - - R - R H
+ - - e - M C - R
+ - H - - - - - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      42.2    -894  h1-g1 g1-f1 
+    3       0.0     514.9    -894  h1-g1 g1-h1 f2-g2 
+    4       0.0    5036.8    -893  e2-e1 f2-g2 b1-c1 e1-d1 
+   --       0.0    5036.8      --  e2-e1 f2-g2 b1-c1 e1-d1 
+   --    node count = 50368
+
+Applying this move: Me2s Cf2e Hb1e Me1w
+
+ r r r - r r r r
+ - - c r m c d -
+ - h - - - - h -
+ d - - - - - - -
+ - - - - E - D -
+ - - - - R - R H
+ - - e - - - C R
+ - - - M - - - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      27.7   -1294  d1-e1 e1-e2 
+    3       0.0     288.3   -1294  d1-e1 h1-g1 g1-f1 
+    4       0.0    2345.2   -1294  d1-e1 h1-g1 g1-h1 e1-e2 
+   --       0.0    2345.2      --  d1-e1 h1-g1 g1-h1 e1-e2 
+   --    node count = 23452
+
+Applying this move: Md1e Rh1w Rg1e Me1n
+
+ - - r - r r r r
+ r - c r m c d -
+ - r - - - - h -
+ d h - - - - - -
+ - - - - E - D -
+ - - - - R - R H
+ - - e - M - C R
+ - - - - - - - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      27.9   -1295  g4-f4 h1-g1 
+    3       0.0     291.9   -1295  g4-f4 h1-g1 g3-g4 
+    4       0.0    2426.1   -1295  g4-f4 h1-g1 g1-h1 g3-g4 
+   --       0.0    2426.1      --  g4-f4 h1-g1 g1-h1 g3-g4 
+   --    node count = 24261
+
+Applying this move: Dg4w Rh1w Rg1e Rg3n
+
+ - - r - r r r r
+ r - c r m c d -
+ - r - - - - h -
+ - h - - - - - -
+ d - - - E D R -
+ - - - e R - - H
+ - - - M - - C R
+ - - - - - - - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      19.1   -1298  g2-f2 f2-e2 
+    3       0.0     180.0   -1298  g2-f2 g4-h4 f2-e2 
+    4       0.0    1338.7   -1298  g2-f2 h1-g1 g1-h1 f2-e2 
+   --       0.0    1338.7      --  g2-f2 h1-g1 g1-h1 f2-e2 
+   --    node count = 13387
+
+Applying this move: Cg2w Rh1w Rg1e Cf2w
+
+ - - r - r r r r
+ r - c r m c d -
+ - r - - - - h -
+ - h - - - - - -
+ d - - - E D R -
+ - - - e - - - H
+ - - - M C - - R
+ - - - - - - - R
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      28.3   -1399  h2-g2 h1-h2 
+    3       0.0     322.9   -1399  h2-g2 h1-g1 g4-h4 
+    4       0.0    2992.1   -1399  h2-g2 h1-g1 g1-h1 h1-h2 
+   --       0.0    2992.1      --  h2-g2 h1-g1 g1-h1 h1-h2 
+   --    node count = 29921
+
+Applying this move: Rh2w Rh1w Rg1e Rh1n
+
+ - - r - r r r r
+ r - c r m c d -
+ - r - - - - h -
+ - h - - - - - -
+ d - - - E D R -
+ - - - e - - - H
+ - - - - C - R R
+ - - - - - - - -
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      23.4   -1900  g2-g3 e2-e3 
+    3       0.0     234.1   -1900  g2-g3 h2-g2 g2-f2 
+    4       0.0    1860.9   -1900  g2-g3 h2-g2 g2-h2 e2-e3 
+   --       0.0    1860.9      --  g2-g3 h2-g2 g2-h2 e2-e3 
+   --    node count = 18609
+
+Applying this move: Rg2n Rh2w Rg2e Ce2n
+
+ - - r - r r r r
+ - - c r m c d -
+ - r - - - - h -
+ - h - - - - - -
+ r d - - E D R -
+ - - - e C - R H
+ - - - - - - - R
+ - - - - - - - -
+
+Depth   Elapsed      Knps    Eval  Main Line
+-----  --------  --------  ------  ------------------------------------------
+    2       0.0      14.3   -1904  f4-f5 g4-f4 
+    3       0.0     126.7   -1904  f4-f5 h2-g2 g4-f4 
+    4       0.0     889.4   -1904  f4-f5 h2-g2 g2-h2 g4-f4 
+   --       0.0     889.4      --  f4-f5 h2-g2 g2-h2 g4-f4 
+   --    node count = 8894
+
+Applying this move: Df4n Rh2w Rg2e Rg4w
