@@ -230,6 +230,13 @@ class Adapter:
 
     def handle_makemove(self, move):
         move = move.strip()
+        # Match runners echo EVERY move to BOTH bots, including the bot that
+        # just played it. handle_go already recorded our own move (and
+        # advanced side/movenum) — recording the echo again desyncs the
+        # movelist. Opponent moves can never be string-identical to ours
+        # (piece letters are opposite case), so this comparison is safe.
+        if self.history and self.history[-1][1] == move:
+            return
         tag = "%d%s" % (self.movenum, self.side_char_native(self.side))
         self.history.append((tag, move))
         if self.have_board or not self.board == {}:
