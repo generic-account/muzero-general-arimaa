@@ -172,6 +172,7 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             side = json.load(f)
         if verbose:
             print(f"restored anneal state {side} from {anneal_sidecar}")
+    consec_failed = int(side.get("consec_failed", 0))  # probation counter
     ratchet = anneal.TrustRatchet(tc, stage=int(side.get("stage", 0)),
                                   best=side.get("best"), ema=side.get("ema"))
     value_w, value_tail_w, cur_mix, kl_w = ratchet.knobs()
@@ -202,7 +203,12 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         # arena-PROMOTED net (the anchor doubles as certified champion), so a
         # bad gradient step can never poison the data distribution. The
         # learner trains on regardless and gets promoted when it proves out.
-        gen_params = (anchor if (feats.certification and anchor is not None)
+        # Probation (see TrainConfig.probation_after): a deadlocked gate frees
+        # generation back to the learner so the data distribution can move.
+        on_probation = bool(tc.probation_after
+                            and consec_failed >= tc.probation_after)
+        gen_params = (anchor if (feats.certification and anchor is not None
+                                 and not on_probation)
                       else state.params)
         recs, completed_frac = generate(gen_params, ksp)
         jax.block_until_ready(recs)                # settle async dispatch before timing
@@ -330,12 +336,21 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
             if promoted:  # learner clearly past the anchor: re-freeze the chain here
                 anchor = state.params
                 anchor_elo = elo_est
+                consec_failed = 0
                 if anchor_pkl:  # keep the chain durable across preemptions
                     checkpoint.save(anchor_pkl + ".tmp", anchor,
                                     {"elo": anchor_elo})
                     os.replace(anchor_pkl + ".tmp", anchor_pkl)
+            else:
+                consec_failed += 1
+                if (tc.probation_after and verbose
+                        and consec_failed == tc.probation_after):
+                    print(f"          [probation] {consec_failed} consecutive "
+                          f"failed gates: self-play generation switches to the "
+                          f"learner until the next promotion")
             logger.write(it, {"arena/score": score, "arena/decided": wins + losses,
                               "arena/promoted": float(promoted),
+                              "arena/consec_failed": float(consec_failed),
                               "elo/estimate": elo_est, "elo/anchor": anchor_elo})
             if verbose:
                 print(f"          arena: score {score:.2f} (W{wins} L{losses} D{draws})"
@@ -422,7 +437,8 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
                     json.dump({"it": it, "stage": ratchet.stage,   # torn file
                                "best": ratchet.best, "ema": ratchet.ema,
                                "tier_ix": tier_ix,
-                               "arena_rounds": arena_rounds}, f)
+                               "arena_rounds": arena_rounds,
+                               "consec_failed": consec_failed}, f)
                 os.replace(tmp, anneal_sidecar)
             if (it + 1) % tc.ckpt_interval == 0:
                 # Also refresh the small portable weights pickle so current

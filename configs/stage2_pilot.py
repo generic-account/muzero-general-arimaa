@@ -56,6 +56,8 @@ cfg = Config(
         ckpt_dir=f"results/jaxarimaa/{RUN}_ckpt",
         compile_cache_dir=f"{BUCKET}/compile-cache",
         arena_interval=10, arena_games=128, arena_threshold=0.55,
+        probation_after=3,  # measured deadlock escape: 6 gates held 0.42-0.49
+                            # while every loss sat flat (distillation ceiling)
         ref_interval=4,                     # rung = planted imitation net:
         eval_max_steps=384,                 # absolute progress vs ~2250 scale
         eval_num_sims=32, eval_num_considered=16,

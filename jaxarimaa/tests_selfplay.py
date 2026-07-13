@@ -64,7 +64,35 @@ train.train(cfg, out_path="{ck}/model.pkl", eval_every=0, verbose=True,
     print("ok resume_sidecar")
 
 
+def test_probation_counter_and_switch():
+    ck = "/tmp/jaxarimaa_tests_probation"
+    shutil.rmtree(ck, ignore_errors=True)
+    prog = '''
+import dataclasses
+from jaxarimaa import train
+from jaxarimaa.config import tiny_config
+cfg = tiny_config()
+cfg = dataclasses.replace(cfg,
+    train=dataclasses.replace(cfg.train, iterations=3,
+        arena_interval=1, arena_games=2, arena_threshold=1.01,
+        probation_after=2, ckpt_interval=1, ckpt_dir="{ck}/ckpt"),
+    features=dataclasses.replace(cfg.features, arena_gating=True,
+                                 certification=True))
+train.train(cfg, out_path="{ck}/model.pkl", eval_every=0, verbose=True,
+            logdir="{ck}/tb")
+'''.format(ck=ck)
+    r = subprocess.run([sys.executable, "-c", prog],
+                       capture_output=True, text=True, timeout=900)
+    assert "[probation] 2 consecutive" in r.stdout, \
+        r.stdout[-800:] + r.stderr[-800:]
+    import json as _json
+    with open(f"{ck}/ckpt/anneal.json") as f:
+        assert _json.load(f)["consec_failed"] >= 2
+    print("ok probation_switch")
+
+
 if __name__ == "__main__":
     test_resign_rows_not_value_real()
     test_resume_restores_sidecar()
+    test_probation_counter_and_switch()
     print("all selfplay tests passed")

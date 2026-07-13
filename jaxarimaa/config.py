@@ -132,6 +132,13 @@ class TrainConfig:
     arena_interval: int = 10        # iters between learner-vs-anchor match rounds
     arena_games: int = 32           # games per color (played both colors)
     arena_threshold: float = 0.55   # score at which the anchor re-freezes to the learner
+    # Certification-deadlock escape (measured on s2pilot 2026-07-13: six
+    # consecutive gates at 0.42-0.49 with all losses flat — the learner fully
+    # distills the frozen generator's data, and the n=128 improvement step is
+    # smaller than the gate margin, so nothing ever promotes). After this many
+    # consecutive failed gates, self-play generation switches to the LEARNER
+    # (fresh on-policy data) until the next promotion re-certifies. 0 = off.
+    probation_after: int = 0
     # EVAL search shape, pinned independently of TRAINING search shape: arms
     # that train with different sims must still be MEASURED identically (arena,
     # rung, eval-vs-random), else readings compare search depth, not nets.
