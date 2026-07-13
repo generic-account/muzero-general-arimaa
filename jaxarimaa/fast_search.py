@@ -102,7 +102,7 @@ def _mask_invalid_actions(logits, invalid_actions):
     return jnp.where(invalid_actions, min_logit, logits)
 
 
-def _write_nodes_batched(tree, batch_f, parent_f, action_f, next_f,
+def _write_nodes_batched(tree, edge_rec, batch_f, parent_f, action_f, next_f,
                          prior_logits_f, value_f, reward_f, discount_f,
                          embedding_f):
     """The tail of mctx.search.expand + update_tree_node, for a whole round.
@@ -134,10 +134,16 @@ def _write_nodes_batched(tree, batch_f, parent_f, action_f, next_f,
         parents=tree.parents.at[batch_f, next_f].set(parent_f),
         action_from_parent=tree.action_from_parent.at[
             batch_f, next_f].set(action_f),
-    )
+    ), edge_rec.at[batch_f, next_f].set(jnp.stack([
+        parent_f.astype(jnp.float32), action_f.astype(jnp.float32),
+        reward_f, discount_f], axis=-1))
+    # edge_rec [B, N, 4]: (parent, action, reward, discount) per node — a
+    # read-optimized mirror for the backward walk: ONE 16-byte row gather per
+    # hop instead of four 4-byte element gathers (each billed a full memory
+    # transaction). parent/action are exact in f32 (< 2^24).
 
 
-def _backward_batched(tree, leaf_indices, num_hops):
+def _backward_batched(tree, edge_rec, leaf_indices, num_hops):
     """mctx.search.backward for K leaves per batch row at once.
 
     Walks all `[B, K]` lanes leaf->root in lockstep for `num_hops` hops
@@ -161,13 +167,18 @@ def _backward_batched(tree, leaf_indices, num_hops):
 
     node_values = tree.node_values
     node_visits = tree.node_visits
+    # packed (value, visits) snapshot: one row gather per hop instead of two
+    # element gathers (visits <= num_simulations are exact in f32).
+    vv_snap = jnp.stack([node_values, node_visits.astype(jnp.float32)],
+                        axis=-1)                                # [B, N, 2]
 
     def hop(carry, _):
         index, leaf_value, child_value, active = carry  # each [B, K]
-        parent = tree.parents[b_idx, index]
-        action = tree.action_from_parent[b_idx, index]
-        reward = tree.children_rewards[b_idx, parent, action]
-        discount = tree.children_discounts[b_idx, parent, action]
+        er = edge_rec[b_idx, index]                     # [B, K, 4]
+        parent = er[..., 0].astype(jnp.int32)
+        action = er[..., 1].astype(jnp.int32)
+        reward = er[..., 2]
+        discount = er[..., 3]
         leaf_value = reward + discount * leaf_value
         is_root = parent == Tree.ROOT_INDEX
         record = (parent, action, leaf_value, child_value, active)
@@ -175,8 +186,9 @@ def _backward_batched(tree, leaf_indices, num_hops):
         # so this matches mctx's (v*count + leaf_value) / (count + 1) exactly.
         # It becomes the NEXT hop's children_values write (mctx writes
         # tree.node_values[index] *after* the previous hop updated it).
-        count = node_visits[b_idx, parent]
-        parent_value = (node_values[b_idx, parent] * count + leaf_value) / (
+        vv = vv_snap[b_idx, parent]                     # [B, K, 2]
+        count = vv[..., 1]
+        parent_value = (vv[..., 0] * count + leaf_value) / (
             count + 1.0)
         carry = (parent, leaf_value, parent_value,
                  jnp.logical_and(active, ~is_root))
@@ -377,6 +389,7 @@ def batched_gumbel_muzero_policy(
     tree = mctx_search.instantiate_tree_from_root(
         root, num_simulations, root_invalid_actions=invalid_actions,
         extra_data=extra_data)
+    edge_rec = jnp.zeros((batch_size, num_simulations + 1, 4), jnp.float32)
 
     interior_fn = functools.partial(
         mctx_action_selection.gumbel_muzero_interior_action_selection,
@@ -476,8 +489,8 @@ def batched_gumbel_muzero_policy(
             params, expand_key, actions_f, embedding_f)
 
         # --- write the round's K nodes with ONE scatter per tree array.
-        tree = _write_nodes_batched(
-            tree, batch_f, parents_f, actions_f, next_f,
+        tree, edge_rec = _write_nodes_batched(
+            tree, edge_rec, batch_f, parents_f, actions_f, next_f,
             step.prior_logits, step.value, step.reward, step.discount,
             new_embedding_f)
 
@@ -485,7 +498,7 @@ def batched_gumbel_muzero_policy(
         # depth <= r+1 (each considered subtree gains at most one node per
         # round), so the lockstep walk needs at most that many hops.
         num_hops = min(round_index + 1, max_depth)
-        tree = _backward_batched(tree, next_idxs, num_hops)
+        tree = _backward_batched(tree, edge_rec, next_idxs, num_hops)
         sim_offset += width
 
     # --- outputs: verbatim mctx.policies.gumbel_muzero_policy tail.
