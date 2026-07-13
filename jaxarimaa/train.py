@@ -43,18 +43,38 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     def _graft_params(fresh, pre):
         """Warm-start merge: take the pretrained leaf wherever path+shape
         match, keep the fresh init elsewhere (e.g. a dense_aux head the
-        imitation net never had). Returns (merged, fresh-kept top paths)."""
+        imitation net never had). Returns (merged, fresh-kept top paths).
+
+        The OUTPUT layer of the grafted head is ZERO-initialized: a randomly
+        initialized head backprops large gradients through the shared stem
+        into the calibrated trunk (which the policy head also reads) and
+        silently destroys play while every loss stays placid, because the
+        losses fit the degrading net's own targets (ws2 post-mortem
+        2026-07-13: -770 Elo vs the warm-start in 256 train steps). With the
+        final kernel+bias at zero, the head's output starts at exactly
+        activation(0), no gradient reaches the trunk until the output layer
+        itself has calibrated — an automatic warmup. Flax numbers modules in
+        creation order, so within the fresh-kept group the highest-numbered
+        module is the head's output layer."""
         from flax import traverse_util
         f_flat = traverse_util.flatten_dict(fresh)
         p_flat = traverse_util.flatten_dict(pre)
         out, kept = {}, set()
+        fresh_keys = []
         for k, v in f_flat.items():
             p = p_flat.get(k)
             if p is not None and p.shape == v.shape:
                 out[k] = jnp.asarray(p, v.dtype)
             else:
                 out[k] = v
+                fresh_keys.append(k)
                 kept.add("/".join(map(str, k[:3])))
+        if fresh_keys:
+            last_module = max("/".join(map(str, k[:-1])) for k in fresh_keys)
+            for k in fresh_keys:
+                if "/".join(map(str, k[:-1])) == last_module:
+                    out[k] = jnp.zeros_like(out[k])
+            kept.add(f"ZEROED:{last_module}")
         return traverse_util.unflatten_dict(out), kept
     # Warm-start from a pretrained (imitation/distillation) checkpoint — the
     # post-cold-start replacement for random init. Orbax resume (below) still

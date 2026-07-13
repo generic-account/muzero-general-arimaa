@@ -29,7 +29,7 @@ from jaxarimaa import train
 from jaxarimaa.config import (Config, FeaturesConfig, MCTSConfig, NetConfig,
                               SelfPlayConfig, TrainConfig)
 
-RUN = sys.argv[1] if len(sys.argv) > 1 else "ws2"
+RUN = sys.argv[1] if len(sys.argv) > 1 else "ws3"
 ITERS = int(sys.argv[2]) if len(sys.argv) > 2 else 40
 BUCKET = "gs://arimaa-tpu-2026-artifacts"
 
