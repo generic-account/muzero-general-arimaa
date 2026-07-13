@@ -39,14 +39,34 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
     key = jax.random.PRNGKey(tc.seed)
     key, kinit = jax.random.split(key)
     state = trainer.create_train_state(cfg, kinit)
+
+    def _graft_params(fresh, pre):
+        """Warm-start merge: take the pretrained leaf wherever path+shape
+        match, keep the fresh init elsewhere (e.g. a dense_aux head the
+        imitation net never had). Returns (merged, fresh-kept top paths)."""
+        from flax import traverse_util
+        f_flat = traverse_util.flatten_dict(fresh)
+        p_flat = traverse_util.flatten_dict(pre)
+        out, kept = {}, set()
+        for k, v in f_flat.items():
+            p = p_flat.get(k)
+            if p is not None and p.shape == v.shape:
+                out[k] = jnp.asarray(p, v.dtype)
+            else:
+                out[k] = v
+                kept.add("/".join(map(str, k[:3])))
+        return traverse_util.unflatten_dict(out), kept
     # Warm-start from a pretrained (imitation/distillation) checkpoint — the
     # post-cold-start replacement for random init. Orbax resume (below) still
     # takes precedence, so a preempted run continues from its own progress.
     if init_params:
         pre, _ = checkpoint.load(init_params)
-        state = state.replace(params=pre)
+        merged, grafted = _graft_params(state.params, pre)
+        state = state.replace(params=merged)
         if verbose:
-            print(f"warm-started params from {init_params}")
+            print(f"warm-started params from {init_params}"
+                  + (f" (fresh-grafted heads: {sorted(grafted)})"
+                     if grafted else ""))
     state = distributed.replicate_tree(mesh, state)
     # Frozen copy of the warm-start params, captured BEFORE Orbax resume so it
     # is identical across preemptions: used for the KL trust region and as the
