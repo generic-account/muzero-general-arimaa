@@ -66,6 +66,44 @@ def _gather(grid, vx, vy):
     return grid[jnp.clip(vy, 0, 7), jnp.clip(vx, 0, 7)]
 
 
+def _onehot_table(vx, vy):
+    """Constant one-hot [64, N_ACTIONS] selecting flat cell clip(vy)*8+clip(vx)
+    per action. See _gather_mm."""
+    import numpy as _np
+    flat = _np.clip(_np.asarray(vy), 0, 7) * 8 + _np.clip(_np.asarray(vx), 0, 7)
+    m = _np.zeros((64, flat.shape[0]), _np.float32)
+    m[flat, _np.arange(flat.shape[0])] = 1.0
+    return jnp.asarray(m)
+
+
+# One matrix per static coordinate table (mover-from, to, opponent-from,
+# opponent-to). Built once at import.
+_OH_F = _onehot_table(_T["frm_x"], _T["frm_y"])
+_OH_T = _onehot_table(_T["to_x"], _T["to_y"])
+_OH_OF = _onehot_table(_T["op_frm_x"], _T["op_frm_y"])
+_OH_OT = _onehot_table(_T["op_to_x"], _T["op_to_y"])
+
+
+def _gather_mm(grid, onehot, dtype=None):
+    """Bit-exact replacement for `_gather` at a STATIC coordinate table.
+
+    `grid[y, x]` advanced indexing at 1393 constant coordinates is rewritten by
+    TPU XLA's GatherExpander into a SEQUENTIAL 1393-iteration while loop
+    (one dynamic-slice + dynamic-update-slice per action) — measured at ~40%
+    of all device time on the s2pilot trace (2026-07-13), since it runs in
+    legal_action_mask/observe on every env step AND every tree expansion.
+    A one-hot matmul does the same selection on the (otherwise idle) MXU.
+
+    Exactness: every grid this touches holds bools or small ints (|v| <= 15),
+    which survive any TPU matmul precision (even a single bf16 pass) exactly;
+    each output element is one exact product plus zeros. So results are
+    bit-identical to _gather after the dtype cast.
+    """
+    flat = grid.reshape(grid.shape[:-2] + (64,)).astype(jnp.float32)
+    res = flat @ onehot
+    return res != 0 if dtype is None else res.astype(dtype)
+
+
 # ---------------------------------------------------------------------------
 # Observation encoding  (mirrors legacy ArimaaEnv.get_observation)
 # ---------------------------------------------------------------------------
@@ -292,16 +330,17 @@ def legal_action_mask(state: State, grids=None) -> jnp.ndarray:
         occ, col, rnk = _piece_grids(board)
         frozen = _frozen_grid(occ, col, rnk)
 
-    # Mover (our unfrozen piece at `from`)
-    f_occ = _gather(occ, _FX, _FY)
-    f_col = _gather(col, _FX, _FY)
-    f_rnk = _gather(rnk, _FX, _FY)
-    f_frozen = _gather(frozen, _FX, _FY)
+    # Mover (our unfrozen piece at `from`). _gather_mm == _gather bit-exactly;
+    # it exists because XLA loop-expands the indexed gather (see its docstring).
+    f_occ = _gather_mm(occ, _OH_F)
+    f_col = _gather_mm(col, _OH_F, jnp.int32)
+    f_rnk = _gather_mm(rnk, _OH_F, jnp.int32)
+    f_frozen = _gather_mm(frozen, _OH_F)
     ours = f_occ & (f_col == player) & (~f_frozen)
 
     # Destination emptiness
-    to_empty = _gather(board, _TX, _TY) == 0
-    op_to_empty = _gather(board, _OTX, _OTY) == 0
+    to_empty = ~_gather_mm(board, _OH_T)      # == 0 <=> one-hot picks a zero
+    op_to_empty = ~_gather_mm(board, _OH_OT)
 
     # Rabbit cannot step backward (plain steps only; pushers/pullers are never rabbits)
     is_rabbit = f_rnk == 0
@@ -309,9 +348,9 @@ def legal_action_mask(state: State, grids=None) -> jnp.ndarray:
     rabbit_ok = ~(is_rabbit & backward)
 
     # Enemy for push/pull: adjacent, opposite colour, strictly weaker than mover
-    e_occ = _gather(occ, _OFX, _OFY)
-    e_col = _gather(col, _OFX, _OFY)
-    e_rnk = _gather(rnk, _OFX, _OFY)
+    e_occ = _gather_mm(occ, _OH_OF)
+    e_col = _gather_mm(col, _OH_OF, jnp.int32)
+    e_rnk = _gather_mm(rnk, _OH_OF, jnp.int32)
     enemy_ok = e_occ & (e_col != player) & (f_rnk > e_rnk)
 
     cost_ok = _COST <= left
