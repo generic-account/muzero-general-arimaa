@@ -19,6 +19,8 @@ PYTHONPATH=. "$PY" jaxarimaa/tests_anneal.py
 
 echo "=== 3/5 fast_search / mctx equivalence ==="
 PYTHONPATH=. "$PY" jaxarimaa/tests_fast_search_v2.py
+echo "=== 3b/5 compact search (v3) equivalence ==="
+PYTHONPATH=. "$PY" jaxarimaa/tests_compact_search.py
 
 echo "=== 4/5 env oracle difftest ==="
 PYTHONPATH=. "$PY" -m jaxarimaa.difftest

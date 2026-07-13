@@ -557,6 +557,506 @@ def unpack_states(words):
 
 
 # ---------------------------------------------------------------------------
+# v3 "compact" search: no [B, N, A] children tables.
+#
+# Motivation (s2pilot round-2 trace, 2026-07-13): the full-width children
+# tables ([B, 129, 1393] f32/s32 = 368MB each) were (a) physically transposed
+# by XLA every halving round to reconcile the scatter-side layout with the
+# descent while_loop's preferred layout (~34% of device time as anonymous
+# reshape+copy pairs), and (b) gathered full-width by the interior action
+# selection (~15%). v3 stores per-NODE compact state instead:
+#
+#   * child stats are DERIVED: children_values/visits of an edge are exact
+#     mirrors of the child node's own node_values/node_visits (mctx's backward
+#     maintains that invariant; we simply read it), and children_rewards/
+#     discounts are per-child scalars (node_reward/node_discount).
+#   * each node keeps its expanded-children list ([B, N, C] action/id/logit,
+#     C = max children possible under the halving schedule) — replaces
+#     children_index.
+#   * interior Gumbel selection works on the candidate subset: among UNVISITED
+#     actions the completed-Q is one shared constant (the mixed value), so
+#     ordering = prior-logit ordering, and the argmax over 1393 actions equals
+#     the argmax over {visited children} + {best unvisited candidate}. Each
+#     node stores its top-(C+1) prior candidates + exact softmax pieces
+#     (row max and sum-exp, captured at expansion) to reproduce mctx's math.
+#
+# Exactness contract: identical arithmetic per term; softmax normalizations
+# regroup fp summation over the subset instead of the full row, so results
+# are exact under a drift-free qtransform (value_scale=0) and drift only on
+# fp near-ties under the default one — the same documented category as the
+# v1/v2 round-regrouping drift. Tie-breaks reproduce argmax's lowest-index
+# rule. The returned PolicyOutput tail is computed on a bitwise-identical
+# root row (1-node mctx tree), so action/action_weights consumers are
+# unaffected.
+# ---------------------------------------------------------------------------
+_UNVISITED = -1
+
+
+def _cmax_from_schedule(rounds, m):
+    """Max children any node can have on-schedule: the root has exactly the
+    round-0 width (== m); an interior node gains at most one child per visit,
+    and its visits are bounded by the schedule's max considered-visit + 1."""
+    max_cv = max(cv for cv, _ in rounds)
+    return max(m, max_cv + 1)
+
+
+def _interior_select_compact(t, node, value_scale=0.1):
+    """gumbel_muzero_interior_action_selection + qtransform_completed_by_mix_value
+    over the node's compact children/candidates. Unbatched (runs under the
+    [K, B] double vmap of the descent loop). `value_scale` mirrors the
+    qtransform's (0.0 = the drift-free test transform)."""
+    eps, maxvisit_init = 1e-8, 50.0
+    va = t["child_actions"][node]                     # [C]
+    vids = t["child_ids"][node]
+    vlog = t["child_logits"][node]
+    valid = va != _UNVISITED
+    safe_ids = jnp.where(valid, vids, 0)
+    vvis = jnp.where(valid, t["node_visits"][safe_ids], 0)
+    vval = t["node_values"][safe_ids]
+    q_c = t["node_reward"][safe_ids] + t["node_discount"][safe_ids] * vval
+
+    raw = t["raw_values"][node]
+    pm = t["prior_max"][node]
+    s_all = t["prior_sumexp"][node]
+    # softmax probs of the visited actions (exact: same exp/max/sum pieces
+    # jax.nn.softmax uses, captured at expansion).
+    vexp = jnp.where(valid, jnp.exp(vlog - pm), 0.0)
+    vprob = jnp.maximum(jnp.finfo(jnp.float32).tiny, vexp / s_all)
+
+    # _compute_mixed_value over the subset (visited slots all have visits>0).
+    sum_visits = jnp.sum(vvis)
+    vis_pos = valid & (vvis > 0)
+    sum_probs = jnp.sum(jnp.where(vis_pos, vprob, 0.0))
+    weighted_q = jnp.sum(jnp.where(
+        vis_pos, vprob * q_c / jnp.where(vis_pos, sum_probs, 1.0), 0.0))
+    mixed = (raw + sum_visits * weighted_q) / (sum_visits + 1)
+
+    # completed + rescale: unvisited all complete to `mixed` and at least one
+    # unvisited action always exists (1393 >> C), so full-row min/max reduce
+    # to min/max over (visited q, mixed).
+    mn = jnp.minimum(jnp.min(jnp.where(valid, q_c, jnp.inf)), mixed)
+    mx = jnp.maximum(jnp.max(jnp.where(valid, q_c, -jnp.inf)), mixed)
+    denom = jnp.maximum(mx - mn, eps)
+    visit_scale = (maxvisit_init + jnp.max(vvis)) * value_scale
+    cq_v = visit_scale * ((q_c - mn) / denom)
+    cq_u = visit_scale * ((mixed - mn) / denom)
+
+    # Best unvisited action = highest-logit candidate not in the child list
+    # (candidate list is logit-descending; ties inherit top_k's index order,
+    # matching the full-width argmax's lowest-index rule).
+    ca = t["cand_actions"][node]                      # [Cc]
+    cl = t["cand_logits"][node]
+    taken = jnp.any(
+        (ca[:, None] == va[None, :]) & valid[None, :], axis=1)
+    first_free = jnp.argmax(~taken)                   # first (best) free slot
+    a_bu = ca[first_free]
+    l_bu = cl[first_free]
+
+    # softmax(prior_logits + completed_q) over the full row, regrouped:
+    # visited terms explicit; the unvisited mass is e^{cq_u} * (sum-exp of all
+    # logits minus the visited ones).
+    m_full = jnp.maximum(
+        jnp.max(jnp.where(valid, vlog + cq_v, -jnp.inf)), l_bu + cq_u)
+    z_vis = jnp.sum(jnp.where(valid, jnp.exp(vlog + cq_v - m_full), 0.0))
+    s_unvis = jnp.maximum(s_all - jnp.sum(vexp), 0.0)
+    z_unvis = jnp.exp(cq_u + pm - m_full) * s_unvis
+    z = z_vis + z_unvis
+
+    score_v = jnp.where(
+        valid,
+        jnp.exp(vlog + cq_v - m_full) / z
+        - vvis.astype(jnp.float32) / (1.0 + sum_visits),
+        -jnp.inf)
+    score_u = jnp.exp(l_bu + cq_u - m_full) / z       # visits == 0
+    scores = jnp.concatenate([score_v, score_u[None]])
+    acts = jnp.concatenate([va, a_bu[None]])
+    best = jnp.max(scores)
+    # argmax tie-break: lowest action id among the tied maxima.
+    return jnp.min(jnp.where(scores == best, acts, jnp.iinfo(jnp.int32).max)
+                   ).astype(jnp.int32)
+
+
+def _lookup_child(t, node, action):
+    """children_index equivalent: the node id of `action` under `node`, or
+    _UNVISITED. Unbatched."""
+    va = t["child_actions"][node]
+    eq = (va == action) & (va != _UNVISITED)
+    slot = jnp.argmax(eq)
+    return jnp.where(jnp.any(eq), t["child_ids"][node, slot],
+                     jnp.int32(_UNVISITED))
+
+
+def _make_compact_simulate(max_depth, value_scale=0.1):
+    """[K, B] lockstep descent over the compact tree (mirrors
+    _make_forced_simulate)."""
+
+    @functools.partial(jax.vmap, in_axes=[0, None, 0], out_axes=0)  # K
+    @functools.partial(jax.vmap, in_axes=[0, 0, 0], out_axes=0)     # B
+    def simulate(rng_key, t, forced_action):
+        del rng_key
+
+        def body(state):
+            node = state["next"]
+            interior = _interior_select_compact(t, node, value_scale)
+            action = jnp.where(state["depth"] == 0, forced_action,
+                               interior).astype(jnp.int32)
+            nxt = _lookup_child(t, node, action)
+            depth = state["depth"] + 1
+            return {"node": node, "action": action, "next": nxt,
+                    "depth": depth,
+                    "cont": jnp.logical_and(nxt != _UNVISITED,
+                                            depth < max_depth)}
+
+        state = {"node": jnp.int32(_UNVISITED), "action": jnp.int32(_UNVISITED),
+                 "next": jnp.int32(Tree.ROOT_INDEX), "depth": jnp.int32(0),
+                 "cont": jnp.array(True)}
+        end = jax.lax.while_loop(lambda s: s["cont"], body, state)
+        return end["node"], end["action"]
+
+    return simulate
+
+
+def _root_stats_at(t, batch_range, actions):
+    """(q, visits) of root children at `actions` [B, m], derived from node
+    stats (bitwise equal to the v2 children-table reads)."""
+    b = batch_range[:, None]
+    va = t["child_actions"][:, Tree.ROOT_INDEX]        # [B, C]
+    vids = t["child_ids"][:, Tree.ROOT_INDEX]
+    valid = va != _UNVISITED
+    eq = (actions[:, :, None] == va[:, None, :]) & valid[:, None, :]
+    found = jnp.any(eq, axis=-1)                       # [B, m]
+    slot = jnp.argmax(eq, axis=-1)
+    ids = jnp.take_along_axis(vids, slot, axis=1)      # [B, m]
+    ids = jnp.where(found, ids, 0)
+    vis = jnp.where(found, t["node_visits"][b, ids], 0)
+    q = t["node_reward"][b, ids] + t["node_discount"][b, ids] \
+        * t["node_values"][b, ids]
+    return q, vis, found
+
+
+def compact_gumbel_muzero_policy(
+    params, rng_key, root, recurrent_fn, num_simulations,
+    invalid_actions=None, max_depth=None, max_num_considered_actions=16,
+    value_scale=0.1):
+    """v3: batched sequential halving over the compact tree (see header)."""
+    batch_size = root.value.shape[0]
+    num_actions = root.prior_logits.shape[-1]
+    if invalid_actions is None:
+        invalid_actions = jnp.zeros_like(root.prior_logits)
+    if max_depth is None:
+        max_depth = num_simulations
+
+    # Mirror v2: the masked logits ARE the root's logits from here on
+    # (the output tail below must see the masked version, as v2's did).
+    root = root.replace(
+        prior_logits=_mask_invalid_actions(root.prior_logits, invalid_actions))
+    root_logits_masked = root.prior_logits
+    rng_key, gumbel_rng = jax.random.split(rng_key)
+    gumbel = jax.random.gumbel(gumbel_rng, shape=root_logits_masked.shape,
+                               dtype=root_logits_masked.dtype)
+
+    rounds = _rounds_from_schedule(max_num_considered_actions, num_simulations)
+    m = max_num_considered_actions
+    c_max = _cmax_from_schedule(rounds, m)
+    cc = c_max + 1
+    n_nodes = num_simulations + 1
+    B, N, C = batch_size, n_nodes, c_max
+
+    def node_stats(logits):  # [R, A] -> (pm, sumexp, cand_actions, cand_logits)
+        pm = jnp.max(logits, axis=-1)
+        s = jnp.sum(jnp.exp(logits - pm[:, None]), axis=-1)
+        cl, ca = jax.lax.top_k(logits, cc)
+        return pm, s, ca.astype(jnp.int32), cl
+
+    r_pm, r_s, r_ca, r_cl = node_stats(root_logits_masked)
+    t = {
+        "node_values": jnp.zeros((B, N), jnp.float32
+                                 ).at[:, Tree.ROOT_INDEX].set(root.value),
+        "raw_values": jnp.zeros((B, N), jnp.float32
+                                ).at[:, Tree.ROOT_INDEX].set(root.value),
+        "node_visits": jnp.zeros((B, N), jnp.int32
+                                 ).at[:, Tree.ROOT_INDEX].set(1),
+        "node_reward": jnp.zeros((B, N), jnp.float32),
+        "node_discount": jnp.zeros((B, N), jnp.float32),
+        "prior_max": jnp.zeros((B, N), jnp.float32
+                               ).at[:, Tree.ROOT_INDEX].set(r_pm),
+        "prior_sumexp": jnp.ones((B, N), jnp.float32
+                                 ).at[:, Tree.ROOT_INDEX].set(r_s),
+        "cand_actions": jnp.zeros((B, N, cc), jnp.int32
+                                  ).at[:, Tree.ROOT_INDEX].set(r_ca),
+        "cand_logits": jnp.zeros((B, N, cc), jnp.float32
+                                 ).at[:, Tree.ROOT_INDEX].set(r_cl),
+        "child_actions": jnp.full((B, N, C), _UNVISITED, jnp.int32),
+        "child_ids": jnp.zeros((B, N, C), jnp.int32),
+        "child_logits": jnp.zeros((B, N, C), jnp.float32),
+        "child_count": jnp.zeros((B, N), jnp.int32),
+        "parents": jnp.full((B, N), Tree.NO_PARENT, jnp.int32),
+        "action_from_parent": jnp.full((B, N), Tree.NO_PARENT, jnp.int32),
+        "embeddings": jnp.zeros((B, N) + root.embedding.shape[1:],
+                                root.embedding.dtype
+                                ).at[:, Tree.ROOT_INDEX].set(root.embedding),
+    }
+
+    batch_range = jnp.arange(B)
+    logit_max_full = jnp.max(root_logits_masked, axis=-1)
+
+    def _apply_fallback(top_actions):
+        selected_invalid = jnp.take_along_axis(
+            invalid_actions, top_actions, axis=1).astype(bool)
+        return jnp.where(selected_invalid, top_actions[:, :1], top_actions)
+
+    def score_root(considered_visit, considered, cons_prior, cons_gumbel):
+        """Bit-identical _completed_q_and_score_subset over derived stats."""
+        eps = 1e-8
+        q, visits, _ = _root_stats_at(t, batch_range, considered)   # [B, m]
+        raw_value = root.value                                      # [B]
+        sum_visit_counts = jnp.sum(visits, axis=-1)
+        prior = jnp.maximum(jnp.finfo(cons_prior.dtype).tiny, cons_prior)
+        sum_probs = jnp.sum(prior, axis=-1)
+        weighted_q = jnp.sum(
+            prior * q / jnp.where(sum_probs[:, None] > 0,
+                                  sum_probs[:, None], 1.0), axis=-1)
+        mixed = (raw_value + sum_visit_counts * weighted_q) / (
+            sum_visit_counts + 1)
+        min_value = jnp.minimum(jnp.min(q, axis=-1), mixed)[:, None]
+        max_value = jnp.maximum(jnp.max(q, axis=-1), mixed)[:, None]
+        rescaled = (q - min_value) / jnp.maximum(max_value - min_value, eps)
+        visit_scale = (50.0 + jnp.max(visits, axis=-1))[:, None]
+        completed_q = visit_scale * value_scale * rescaled
+        logits_norm = jnp.take_along_axis(root_logits_masked, considered,
+                                          axis=1) - logit_max_full[:, None]
+        penalty = jnp.where(visits == considered_visit, 0.0, -jnp.inf)
+        return jnp.maximum(-1e9, cons_gumbel + logits_norm + completed_q) \
+            + penalty
+
+    prior_full = jax.nn.softmax(root_logits_masked, axis=-1)
+    considered = considered_prior = gumbel_sub = None
+    sim_offset = 0
+    simulate = _make_compact_simulate(max_depth, value_scale)
+
+    for round_index, (considered_visit, width) in enumerate(rounds):
+        if round_index == 0:
+            # Round 0: no root children yet -> completed_q is exactly 0
+            # (all-equal completed values rescale to 0); scores = gumbel +
+            # normalized logits, mctx's score_considered form.
+            logits_norm = root_logits_masked - logit_max_full[:, None]
+            scores = jnp.maximum(-1e9, gumbel + logits_norm)
+            _, top_actions = jax.lax.top_k(scores, width)
+            top_actions = _apply_fallback(top_actions)
+            considered = jnp.sort(top_actions, axis=-1)
+            considered_prior = jnp.take_along_axis(prior_full, considered,
+                                                   axis=1)
+            gumbel_sub = jnp.take_along_axis(gumbel, considered, axis=1)
+        else:
+            scores_sub = score_root(considered_visit, considered,
+                                    considered_prior, gumbel_sub)
+            scores = jnp.full((B, num_actions), -jnp.inf,
+                              dtype=scores_sub.dtype)
+            scores = scores.at[batch_range[:, None], considered].set(scores_sub)
+            _, top_actions = jax.lax.top_k(scores, width)
+            top_actions = _apply_fallback(top_actions)
+
+        rng_key, simulate_rng = jax.random.split(rng_key)
+        sim_keys = jax.random.split(simulate_rng, width * B)
+        sim_keys = sim_keys.reshape((width, B) + sim_keys.shape[1:])
+        parent_kb, action_kb = simulate(sim_keys, t, top_actions.T)
+        parents = parent_kb.T                                  # [B, K]
+        actions = action_kb.T
+
+        # existing-child lookup (vectorized): (parent, action) -> id or new
+        pa_va = t["child_actions"][batch_range[:, None], parents]   # [B,K,C]
+        pa_ids = t["child_ids"][batch_range[:, None], parents]
+        eq = (pa_va == actions[:, :, None]) & (pa_va != _UNVISITED)
+        exists = jnp.any(eq, axis=-1)
+        exist_slot = jnp.argmax(eq, axis=-1)
+        exist_id = jnp.take_along_axis(pa_ids, exist_slot[..., None],
+                                       axis=-1)[..., 0]
+        new_ids = jnp.broadcast_to(
+            sim_offset + jnp.arange(width, dtype=jnp.int32)[None, :] + 1,
+            (B, width))
+        # Off-schedule fallback rows can put the SAME (parent, action) in two
+        # lanes of one round; those lanes share the first occurrence's node id
+        # (their recurrent outputs are identical, and node_visits.add counts
+        # each lane — preserving mctx's edge-visit sums).
+        key_pa = parents * num_actions + actions               # [B, K]
+        eq_pa = key_pa[:, :, None] == key_pa[:, None, :]       # [B, K, K]
+        first_ix = jnp.argmax(eq_pa, axis=-1)                  # [B, K]
+        new_ids = jnp.take_along_axis(new_ids, first_ix, axis=1)
+        next_idxs = jnp.where(exists, exist_id, new_ids)       # [B, K]
+
+        # --- one batched recurrent_fn call (packed-embedding gather as v2).
+        parents_f = parents.reshape(-1)
+        actions_f = actions.reshape(-1)
+        next_f = next_idxs.reshape(-1)
+        batch_f = jnp.repeat(batch_range, width)
+        embedding_f = t["embeddings"][batch_f, parents_f]
+        rng_key, expand_key = jax.random.split(rng_key)
+        step, new_embedding_f = recurrent_fn(params, expand_key, actions_f,
+                                             embedding_f)
+
+        # --- node writes (all node-indexed at next_f; distinct on-schedule).
+        pm_f, s_f, ca_f, cl_f = node_stats(step.prior_logits)
+        # parent-side edge write: overwrite the existing slot on re-expansion
+        # (mirrors mctx's children_index pointer overwrite), else append.
+        # Lanes in one round can SHARE a parent (e.g. round 0: all K under the
+        # root), so appended slots are count + the lane's rank among same-
+        # parent new lanes this round (actions are distinct on-schedule).
+        count_f = t["child_count"][batch_f, parents_f]
+        lane = jnp.arange(width)
+        is_first = first_ix == lane[None, :]                   # [B, K]
+        new_first = (~exists) & is_first
+        same_parent = parents[:, :, None] == parents[:, None, :]
+        rank = jnp.sum(same_parent & new_first[:, None, :]
+                       & (lane[None, None, :] < lane[None, :, None]),
+                       axis=-1)                                # [B, K]
+        slot_new = jnp.minimum(count_f.reshape(B, width) + rank, C - 1)
+        # duplicates inherit the first occurrence's slot; existing edges
+        # overwrite in place (mctx pointer-overwrite semantics).
+        slot_new = jnp.take_along_axis(slot_new, first_ix, axis=1)
+        new_f = ~exists.reshape(-1)
+        slot_f = jnp.where(new_f, slot_new.reshape(-1), exist_slot.reshape(-1))
+        # child's logit under the parent: from the parent's stored rows —
+        # cand list first, else the (re-expanded) existing slot's logit.
+        cand_pa = t["cand_actions"][batch_f, parents_f]         # [F, Cc]
+        cand_pl = t["cand_logits"][batch_f, parents_f]
+        in_cand = cand_pa == actions_f[:, None]
+        cand_hit = jnp.any(in_cand, axis=-1)
+        cand_slot = jnp.argmax(in_cand, axis=-1)
+        logit_from_cand = jnp.take_along_axis(
+            cand_pl, cand_slot[:, None], axis=-1)[:, 0]
+        old_logit = t["child_logits"][batch_f, parents_f, slot_f]
+        # root round-0 actions may fall outside the parent's top-(C+1) cand
+        # list; fetch those from the full root logits row (root only).
+        root_logit = root_logits_masked[batch_f, actions_f]
+        fallback_logit = jnp.where(parents_f == Tree.ROOT_INDEX, root_logit,
+                                   old_logit)
+        edge_logit = jnp.where(cand_hit, logit_from_cand, fallback_logit)
+
+        t = dict(
+            t,
+            node_values=t["node_values"].at[batch_f, next_f].set(step.value),
+            raw_values=t["raw_values"].at[batch_f, next_f].set(step.value),
+            node_visits=t["node_visits"].at[batch_f, next_f].add(1),
+            node_reward=t["node_reward"].at[batch_f, next_f].set(step.reward),
+            node_discount=t["node_discount"].at[batch_f, next_f].set(
+                step.discount),
+            prior_max=t["prior_max"].at[batch_f, next_f].set(pm_f),
+            prior_sumexp=t["prior_sumexp"].at[batch_f, next_f].set(s_f),
+            cand_actions=t["cand_actions"].at[batch_f, next_f].set(ca_f),
+            cand_logits=t["cand_logits"].at[batch_f, next_f].set(cl_f),
+            child_actions=t["child_actions"].at[
+                batch_f, parents_f, slot_f].set(actions_f),
+            child_ids=t["child_ids"].at[batch_f, parents_f, slot_f].set(next_f),
+            child_logits=t["child_logits"].at[
+                batch_f, parents_f, slot_f].set(edge_logit),
+            child_count=t["child_count"].at[batch_f, parents_f].add(
+                jnp.where(new_first.reshape(-1), 1, 0)),
+            parents=t["parents"].at[batch_f, next_f].set(parents_f),
+            action_from_parent=t["action_from_parent"].at[
+                batch_f, next_f].set(actions_f),
+            embeddings=t["embeddings"].at[batch_f, next_f].set(new_embedding_f),
+        )
+
+        # --- backward: node stats only (children_* are derived views).
+        num_hops = min(round_index + 1, max_depth)
+        t = _backward_compact(t, next_idxs, num_hops)
+        sim_offset += width
+
+    # --- outputs: verbatim v2 tail on a 1-node mctx tree whose root row is
+    # scattered back from the compact stats (bitwise-identical values).
+    va = t["child_actions"][:, Tree.ROOT_INDEX]                # [B, C]
+    vids = t["child_ids"][:, Tree.ROOT_INDEX]
+    valid = va != _UNVISITED
+    safe_a = jnp.where(valid, va, num_actions)                 # OOB -> drop
+    ids0 = jnp.where(valid, vids, 0)
+    bidx = batch_range[:, None]
+    full_visits = jnp.zeros((B, num_actions), jnp.int32).at[
+        bidx, safe_a].set(jnp.where(valid, t["node_visits"][bidx, ids0], 0),
+                          mode="drop")
+    full_values = jnp.zeros((B, num_actions), jnp.float32).at[
+        bidx, safe_a].set(t["node_values"][bidx, ids0], mode="drop")
+    full_rewards = jnp.zeros((B, num_actions), jnp.float32).at[
+        bidx, safe_a].set(t["node_reward"][bidx, ids0], mode="drop")
+    full_discounts = jnp.zeros((B, num_actions), jnp.float32).at[
+        bidx, safe_a].set(t["node_discount"][bidx, ids0], mode="drop")
+
+    extra_data = mctx_action_selection.GumbelMuZeroExtraData(root_gumbel=gumbel)
+    mini = Tree(
+        node_visits=t["node_visits"][:, :1],
+        raw_values=t["raw_values"][:, :1],
+        node_values=t["node_values"][:, :1],
+        parents=jnp.full((B, 1), Tree.NO_PARENT, jnp.int32),
+        action_from_parent=jnp.full((B, 1), Tree.NO_PARENT, jnp.int32),
+        children_index=jnp.full((B, 1, num_actions), _UNVISITED, jnp.int32),
+        children_prior_logits=root_logits_masked[:, None, :],
+        children_visits=full_visits[:, None, :],
+        children_rewards=full_rewards[:, None, :],
+        children_discounts=full_discounts[:, None, :],
+        children_values=full_values[:, None, :],
+        embeddings=jax.tree_util.tree_map(lambda x: x[:, :1], t["embeddings"]),
+        root_invalid_actions=invalid_actions,
+        extra_data=extra_data,
+    )
+    summary = mini.summary()
+    considered_visit = jnp.max(summary.visit_counts, axis=-1, keepdims=True)
+    completed_qvalues = jax.vmap(
+        functools.partial(mctx_qtransforms.qtransform_completed_by_mix_value,
+                          value_scale=value_scale),
+        in_axes=[0, None])(mini, Tree.ROOT_INDEX)
+    to_argmax = mctx_seq_halving.score_considered(
+        considered_visit, gumbel, root.prior_logits, completed_qvalues,
+        summary.visit_counts)
+    action = mctx_action_selection.masked_argmax(to_argmax, invalid_actions)
+    completed_search_logits = _mask_invalid_actions(
+        root.prior_logits + completed_qvalues, invalid_actions)
+    action_weights = jax.nn.softmax(completed_search_logits)
+    return mctx_base.PolicyOutput(
+        action=action, action_weights=action_weights, search_tree=mini)
+
+
+def _backward_compact(t, leaf_indices, num_hops):
+    """_backward_batched without the children-table writes (derived views).
+    Node math identical (bitwise)."""
+    batch_size, num_lanes = leaf_indices.shape
+    num_nodes = t["node_values"].shape[1]
+    b_idx = jnp.arange(batch_size)[:, None]
+    node_values = t["node_values"]
+    node_visits = t["node_visits"]
+
+    def hop(carry, _):
+        index, leaf_value, active = carry
+        parent = t["parents"][b_idx, index]
+        reward = t["node_reward"][b_idx, index]
+        discount = t["node_discount"][b_idx, index]
+        leaf_value = reward + discount * leaf_value
+        is_root = parent == Tree.ROOT_INDEX
+        record = (parent, leaf_value, active)
+        carry = (parent, leaf_value, jnp.logical_and(active, ~is_root))
+        return carry, record
+
+    init = (leaf_indices, node_values[b_idx, leaf_indices],
+            jnp.ones(leaf_indices.shape, dtype=bool))
+    _, (parent_h, leaf_h, active_h) = jax.lax.scan(
+        hop, init, None, length=num_hops)
+
+    mask = active_h.reshape(-1)
+    par = jnp.where(mask, parent_h.reshape(-1), num_nodes)
+    bat = jnp.broadcast_to(b_idx[None, :, :], active_h.shape).reshape(-1)
+    leaf_v = leaf_h.reshape(-1)
+    one = jnp.ones((), dtype=node_visits.dtype)
+
+    cnt = jnp.zeros_like(node_visits).at[bat, par].add(one, mode="drop")
+    leaf_sum = jnp.zeros_like(node_values).at[bat, par].add(
+        leaf_v, mode="drop")
+    new_node_values = jnp.where(
+        cnt > 0,
+        (node_values * node_visits + leaf_sum) / (node_visits + cnt),
+        node_values)
+    return dict(t, node_values=new_node_values,
+                node_visits=node_visits + cnt)
+
+
+# ---------------------------------------------------------------------------
 # jaxarimaa wrapper: identical signature to search.run_search (drop-in).
 # ---------------------------------------------------------------------------
 @functools.partial(jax.jit, static_argnums=(0, 4, 5, 6, 7))
@@ -577,7 +1077,10 @@ def run_search(model, params, rng_key, states, num_simulations,
         out, nstates = inner_fn(params_, key, actions, unpack_states(packed))
         return out, pack_states(nstates)
 
-    return batched_gumbel_muzero_policy(
+    policy = (compact_gumbel_muzero_policy
+              if (features is not None and features.compact_search)
+              else batched_gumbel_muzero_policy)
+    return policy(
         params=params,
         rng_key=rng_key,
         root=root,

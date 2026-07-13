@@ -40,6 +40,8 @@ def main():
     p.add_argument("--blocks", type=int, default=10)
     p.add_argument("--reps", type=int, default=3)
     p.add_argument("--profile", default=None, help="XLA trace dir for rep 1")
+    p.add_argument("--compact", action="store_true",
+                   help="enable features.compact_search (v3 tree)")
     args = p.parse_args()
 
     n_chips = len(jax.devices())
@@ -59,6 +61,7 @@ def main():
             planes_frozen=True, planes_trap=True, planes_step_in_turn=True,
             planes_moved=True,
             deblunder=True, prune_policy_targets=True, truncation_draw=True,
+            compact_search=args.compact,
         ),
     )
     feats = cfg.features
