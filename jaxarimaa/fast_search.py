@@ -203,11 +203,14 @@ def _backward_batched(tree, leaf_indices, num_hops):
     one = jnp.ones((), dtype=tree.children_visits.dtype)
 
     # Per-node visit increments and leaf_value sums (root gets all K lanes,
-    # non-root nodes exactly one on-schedule).
-    cnt = jnp.zeros_like(node_visits).at[bat, par].add(
-        one, mode="drop")
-    leaf_sum = jnp.zeros_like(node_values).at[bat, par].add(
-        leaf_v, mode="drop")
+    # non-root nodes exactly one on-schedule). One packed [B, N, 2] scatter
+    # instead of two: counts <= num_simulations are exact in f32, so the
+    # unpacked columns are bitwise what the two separate scatters produced.
+    acc = jnp.zeros(node_values.shape + (2,), node_values.dtype).at[
+        bat, par].add(jnp.stack([jnp.ones_like(leaf_v), leaf_v], axis=-1),
+                      mode="drop")
+    cnt = acc[..., 0].astype(node_visits.dtype)
+    leaf_sum = acc[..., 1]
     new_node_values = jnp.where(
         cnt > 0,
         (node_values * node_visits + leaf_sum) / (node_visits + cnt),
