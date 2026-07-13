@@ -91,8 +91,30 @@ train.train(cfg, out_path="{ck}/model.pkl", eval_every=0, verbose=True,
     print("ok probation_switch")
 
 
+def test_packed_state_roundtrip():
+    """fast_search packs tree-node States into one uint32 buffer (the 58%
+    gather fix); the bijection must be exact on every field, including after
+    real play (nonzero rep ring, mid-turn steps_left)."""
+    import jax.numpy as jnp
+    from jaxarimaa import env as jenv, fast_search
+    from jaxarimaa.types import State
+    states = jax.vmap(jenv.init_state)(jax.random.split(jax.random.PRNGKey(0), 16))
+    for i in range(40):
+        legal = jax.vmap(jenv.legal_action_mask)(states)
+        g = jax.random.gumbel(jax.random.PRNGKey(i), legal.shape)
+        states = jax.vmap(jenv.step)(states, jnp.argmax(
+            jnp.where(legal, g, -jnp.inf), axis=-1))
+    rt = fast_search.unpack_states(fast_search.pack_states(states))
+    for f in State.__dataclass_fields__:
+        a, b = getattr(states, f), getattr(rt, f)
+        assert a.dtype == b.dtype and a.shape == b.shape, f
+        assert np.array_equal(np.asarray(a), np.asarray(b)), f
+    print("ok packed_state_roundtrip")
+
+
 if __name__ == "__main__":
     test_resign_rows_not_value_real()
     test_resume_restores_sidecar()
     test_probation_counter_and_switch()
+    test_packed_state_roundtrip()
     print("all selfplay tests passed")
