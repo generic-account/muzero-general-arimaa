@@ -173,6 +173,9 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         if verbose:
             print(f"restored anneal state {side} from {anneal_sidecar}")
     consec_failed = int(side.get("consec_failed", 0))  # probation counter
+    if verbose and tc.probation_after and consec_failed >= tc.probation_after:
+        print(f"[probation] active on restore ({consec_failed} failed gates): "
+              f"self-play generates from the learner")
     ratchet = anneal.TrustRatchet(tc, stage=int(side.get("stage", 0)),
                                   best=side.get("best"), ema=side.get("ema"))
     value_w, value_tail_w, cur_mix, kl_w = ratchet.knobs()
