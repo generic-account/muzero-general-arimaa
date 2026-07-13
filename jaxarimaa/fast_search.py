@@ -296,8 +296,14 @@ def _make_forced_simulate(interior_fn):
     @functools.partial(jax.vmap, in_axes=[0, None, 0, None], out_axes=0)  # K
     @functools.partial(jax.vmap, in_axes=[0, 0, 0, None], out_axes=0)     # B
     def simulate_forced(rng_key, tree, forced_action, max_depth):
-        def selection_fn(key, t, node_index, depth):
-            interior = interior_fn(key, t, node_index, depth)
+        # NOTE: gumbel interior selection is deterministic (mctx deletes the
+        # key), so no per-hop rng split is carried — the old per-hop
+        # jax.random.split was a [K, B]-wide threefry chain per hop feeding a
+        # deleted argument (pure dispatch waste, visible in traces as 8-byte
+        # slice/threefry ops). `rng_key` stays in the signature so callers'
+        # key-stream consumption (and thus all search outputs) is unchanged.
+        def selection_fn(t, node_index, depth):
+            interior = interior_fn(rng_key, t, node_index, depth)
             return jnp.where(depth == 0, forced_action, interior).astype(jnp.int32)
 
         def cond_fun(state):
@@ -305,12 +311,10 @@ def _make_forced_simulate(interior_fn):
 
         def body_fun(state):
             node_index = state["next_node_index"]
-            rng, sel_key = jax.random.split(state["rng_key"])
-            action = selection_fn(sel_key, tree, node_index, state["depth"])
+            action = selection_fn(tree, node_index, state["depth"])
             next_node_index = tree.children_index[node_index, action]
             depth = state["depth"] + 1
             return {
-                "rng_key": rng,
                 "node_index": node_index,
                 "action": action,
                 "next_node_index": next_node_index,
@@ -321,7 +325,6 @@ def _make_forced_simulate(interior_fn):
 
         root_index = jnp.array(Tree.ROOT_INDEX, dtype=jnp.int32)
         state = {
-            "rng_key": rng_key,
             "node_index": jnp.full((), Tree.NO_PARENT, jnp.int32),
             "action": jnp.full((), Tree.NO_PARENT, jnp.int32),
             "next_node_index": root_index,
