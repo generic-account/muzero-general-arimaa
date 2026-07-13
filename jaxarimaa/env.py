@@ -113,8 +113,17 @@ _ZPLAYER = jnp.asarray(C.ZOBRIST_PLAYER)  # [2] uint32
 
 
 def position_hash(board, player):
-    """Zobrist hash of (board, side-to-move). Empty cells contribute 0."""
-    cell_keys = _ZCELLS[board.reshape(-1).astype(jnp.int32), jnp.arange(C.N_CELLS)]
+    """Zobrist hash of (board, side-to-move). Empty cells contribute 0.
+
+    The cell-key lookup is a 13-way select-sum rather than
+    `_ZCELLS[board_flat, arange(64)]`: the dynamically-indexed gather gets
+    serialized by TPU XLA's GatherExpander (measured on the s2pilot round-2
+    trace at 9.3% of device time — this runs inside every legal_action_mask).
+    Each cell matches exactly one code, so the where-sum is the exact uint32
+    key (integer ops only, bit-identical)."""
+    b = board.reshape(-1).astype(jnp.int32)                       # [64]
+    sel = b[None, :] == jnp.arange(13, dtype=jnp.int32)[:, None]  # [13, 64]
+    cell_keys = jnp.sum(jnp.where(sel, _ZCELLS, jnp.uint32(0)), axis=0)
     h = jax.lax.reduce(cell_keys, jnp.uint32(0), jax.lax.bitwise_xor, (0,))
     return h ^ _ZPLAYER[player.astype(jnp.int32)]
 
