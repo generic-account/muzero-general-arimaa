@@ -1,4 +1,12 @@
-"""Warm-start x stage-2 validation — the LAST unknown before the big run.
+"""Warm-start x stage-2 validation, take 3: the WARM-START PROFILE.
+
+ws2/ws3 post-mortems: the from-scratch-tuned stage-2 loop is actively
+destructive for a strong prior — pruned policy targets delete prior mass on
+unvisited actions and prior_temp>1 flattens a sharp prior; collapse to the
+clamp in <=4 iterations, dense-head graft or not. This profile keeps the
+stage-2 value machinery (deblunder, truncation draws, certification,
+probation, dense aux zero-grafted) but uses Gumbel action_weights targets,
+prior_temp=1.0, lr=1e-4.
 
 Tested so far: warm-start + tethers (stage 1: fails, equilibrates below the
 prior) and from-scratch + stage-2 mechanisms (s2pilot: climbs). This run
@@ -29,7 +37,7 @@ from jaxarimaa import train
 from jaxarimaa.config import (Config, FeaturesConfig, MCTSConfig, NetConfig,
                               SelfPlayConfig, TrainConfig)
 
-RUN = sys.argv[1] if len(sys.argv) > 1 else "ws3"
+RUN = sys.argv[1] if len(sys.argv) > 1 else "ws4"
 ITERS = int(sys.argv[2]) if len(sys.argv) > 2 else 40
 BUCKET = "gs://arimaa-tpu-2026-artifacts"
 
@@ -49,12 +57,12 @@ cfg = Config(
     train=TrainConfig(
         train_batch_size=1024, iterations=ITERS, train_steps_per_iter=64,
         replay_capacity=1048576, warmup_steps=100,
-        lr=3e-4,                            # warm-start LR (stage-1 calibrated)
+        lr=1e-4,                            # warm profile: extra caution untethered
         max_steps_tiers=(256, 384, 512), completion_target=0.65,
         value_loss_weight=1.0, value_tail_weight=1.0,
         dense_aux_weight=0.3, dense_aux_k=32,
         surprise_weight=0.5,
-        prior_temp=1.2,
+        prior_temp=1.0,   # warm profile: flattening a sharp prior = active degradation (ws3)
         deblunder_threshold=0.15, deblunder_width=0.15,
         kl_prior_weight=0.0, corpus_mix=0.0,   # UNTETHERED
         anneal_stages=0,
@@ -72,7 +80,13 @@ cfg = Config(
         arena_gating=True, moves_left_head=True,
         planes_frozen=True, planes_trap=True, planes_step_in_turn=True,
         planes_moved=True,
-        deblunder=True, dense_aux=True, prune_policy_targets=True,
+        deblunder=True, dense_aux=True,
+        # prune_policy_targets OFF for warm starts (ws3 post-mortem): pruning
+        # deletes prior mass on the 1361 unvisited actions every update ->
+        # catastrophic forgetting (-720 in 4 iters). Gumbel action_weights
+        # impute prior+Q mass for unvisited actions - the designed target
+        # when the value head is sound (which a regrounded warm start is).
+        prune_policy_targets=False,
         certification=True, truncation_draw=True,
     ),
 )
