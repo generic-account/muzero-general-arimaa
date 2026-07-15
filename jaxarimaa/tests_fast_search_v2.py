@@ -113,7 +113,7 @@ def load_v1():
 
 
 def run_policy(policy_fn, model, params, key, states, n, m, qtransform=None):
-    prior_logits, value, legal = slow_search._eval(model, params, states, None)
+    prior_logits, value, legal, _ = slow_search._eval(model, params, states, None)
     root = mctx.RootFnOutput(prior_logits=prior_logits, value=value,
                              embedding=states)
     kwargs = {} if qtransform is None else {"qtransform": qtransform}

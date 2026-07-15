@@ -25,7 +25,7 @@ net = network.make_network(NetConfig(channels=16, blocks=2))
 states = make_states(jax.random.PRNGKey(7), batch=BATCH)
 obs = jax.vmap(lambda s: jenv.observe(s, None))(states)
 params = net.init(jax.random.PRNGKey(0), obs[0])
-prior, value, legal = slow_search._eval(net, params, states, None)
+prior, value, legal, _ = slow_search._eval(net, params, states, None)
 
 inner = slow_search.make_recurrent_fn(net, None, 1.0)
 def rec(params_, key, actions, packed):
