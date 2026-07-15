@@ -142,7 +142,11 @@ def train(cfg: Config, out_path="results/jaxarimaa/model.pkl", eval_every=1,
         dense_k=tc.dense_aux_k, surprise_w=tc.surprise_weight,
         prior_temp=tc.prior_temp,
         deblunder_threshold=tc.deblunder_threshold,
-        deblunder_width=tc.deblunder_width)
+        deblunder_width=tc.deblunder_width,
+        ml_steer=(tc.ml_steer_weight if feats.ml_steering else 0.0),
+        resolve_steps=(tc.resolve_steps if feats.rollout_resolve else 0),
+        qmix_lambda=(tc.qmix_lambda if feats.qmix_value else 1.0),
+        handicap_frac=(tc.handicap_frac if feats.handicap_games else 0.0))
     # Adaptive game length: if tiers are configured, hop between them to keep the
     # game-completion fraction in a target band as the bot's play-length drifts
     # (each tier is a separate compile, cached after first use).

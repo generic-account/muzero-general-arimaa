@@ -41,6 +41,21 @@ class FeaturesConfig:
                                         # action_weights (which impute Q-reweighted mass for
                                         # NEVER-visited actions — poison when value is OOD)
     adjudicate_truncation: bool = False  # truncated games: material/advancement adjudication (env.material_eval) instead of net bootstrap
+    # --- Stage-2.2 (breaking the equal-strength value wall; see memory
+    #     warmstart-stage2: outcome-only value targets go silent/noisy as games
+    #     approach 50/50 + truncation draws, and that ALONE collapses play) ---
+    ml_steering: bool = False          # optima moves-left steering: child values
+                                       # shifted toward faster wins/slower losses
+                                       # inside search (requires moves_left_head)
+    rollout_resolve: bool = False      # finish cap-truncated games with cheap
+                                       # policy-only rollouts -> REAL outcome
+                                       # labels instead of false draws
+    qmix_value: bool = False           # value targets = qmix_lambda*outcome +
+                                       # (1-lambda)*root search Q (TD-style
+                                       # variance reduction at equal strength)
+    handicap_games: bool = False       # a fraction of games start one non-rabbit
+                                       # piece down: decisive, honestly-labeled
+                                       # games at ANY strength (KataGo handicap)
     fast_search: bool = False          # batched sequential halving (wave-parallel Gumbel; see fast_search.py)
     compact_search: bool = False       # v3: no full-width children tables (kills the
                                        # [B,129,1393] layout transposes + gathers that
@@ -146,6 +161,11 @@ class TrainConfig:
     # consecutive failed gates, self-play generation switches to the LEARNER
     # (fresh on-policy data) until the next promotion re-certifies. 0 = off.
     probation_after: int = 0
+    # --- Stage-2.2 knobs (active only with their feature gates) ---
+    ml_steer_weight: float = 0.2    # bounded value shift: +-0.5*w at ml extremes
+    resolve_steps: int = 256        # policy-only rollout budget for truncated games
+    qmix_lambda: float = 0.7        # weight on OUTCOME in the value target mix
+    handicap_frac: float = 0.1      # fraction of games starting a piece down
     # EVAL search shape, pinned independently of TRAINING search shape: arms
     # that train with different sims must still be MEASURED identically (arena,
     # rung, eval-vs-random), else readings compare search depth, not nets.

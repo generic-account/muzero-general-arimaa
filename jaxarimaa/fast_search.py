@@ -1078,19 +1078,21 @@ def _backward_compact(t, leaf_indices, num_hops):
 # ---------------------------------------------------------------------------
 # jaxarimaa wrapper: identical signature to search.run_search (drop-in).
 # ---------------------------------------------------------------------------
-@functools.partial(jax.jit, static_argnums=(0, 4, 5, 6, 7))
+@functools.partial(jax.jit, static_argnums=(0, 4, 5, 6, 7, 8))
 def run_search(model, params, rng_key, states, num_simulations,
-               max_num_considered_actions, features=None, prior_temp=1.0):
+               max_num_considered_actions, features=None, prior_temp=1.0,
+               ml_steer=0.0):
     from . import search as slow_search
 
-    prior_logits, value, legal = slow_search._eval(model, params, states, features)
+    prior_logits, value, legal, _ = slow_search._eval(model, params, states, features)
     if prior_temp != 1.0:
         # Anti-self-sharpening (optima/KataGo): flatten the net's priors fed to
         # search so exploration survives the policy's own sharpening feedback.
         prior_logits = prior_logits / prior_temp
     root = mctx.RootFnOutput(prior_logits=prior_logits, value=value,
                              embedding=pack_states(states))
-    inner_fn = slow_search.make_recurrent_fn(model, features, prior_temp)
+    inner_fn = slow_search.make_recurrent_fn(model, features, prior_temp,
+                                             ml_steer)
 
     def recurrent_fn(params_, key, actions, packed):
         out, nstates = inner_fn(params_, key, actions, unpack_states(packed))

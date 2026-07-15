@@ -148,6 +148,63 @@ def test_cross_arch_rung_match():
     print(f"ok cross_arch_rung_match (W{int(a)} L{int(b)} U{int(u)})")
 
 
+def test_handicap_starts():
+    """handicap_frac=1: every game starts with exactly 31 pieces (one
+    non-rabbit removed from one side)."""
+    feats = dataclasses.replace(CFG.features, handicap_games=True)
+    recs, _ = gen_flat(feats, selfplay.SPKnobs(handicap_frac=1.0), batch=8, T=4)
+    obs0 = recs["obs"][0].astype(np.float32)          # [B, P, 8, 8]
+    gold = obs0[:, 0:6].sum(axis=(1, 2, 3))
+    silver = obs0[:, 6:12].sum(axis=(1, 2, 3))
+    total = gold + silver
+    assert (total == 31).all(), total
+    assert ((gold == 15) ^ (silver == 15)).all(), (gold, silver)
+    print("ok handicap_starts")
+
+
+def test_rollout_resolve():
+    """rollout_resolve + truncation_draw: all targets grounded; resolved
+    tails carry real +-1 outcomes when any game resolves."""
+    feats = dataclasses.replace(CFG.features, truncation_draw=True,
+                                rollout_resolve=True)
+    knobs = selfplay.SPKnobs(resolve_steps=120)
+    a, _ = gen_flat(feats, knobs, batch=8, T=16, seed=5)
+    assert a["value_real"].min() == 1.0, "truncation_draw+resolve => all real"
+    assert np.abs(a["value_target"]).max() <= 1.0
+    base_feats = dataclasses.replace(CFG.features, truncation_draw=True)
+    b, _ = gen_flat(base_feats, selfplay.SPKnobs(), batch=8, T=16, seed=5)
+    n_res = int((np.abs(a["value_target"][-1]) > 0.9).sum())
+    print(f"ok rollout_resolve (resolved-tail rows: {n_res}, "
+          f"targets differ: {not np.array_equal(a['value_target'], b['value_target'])})")
+
+
+def test_qmix_targets():
+    """qmix: non-terminal targets = l*outcome + (1-l)*root_v; the implied
+    root_v is bounded and terminal rows keep exact outcomes."""
+    feats = dataclasses.replace(CFG.features, qmix_value=True)
+    mix, _ = gen_flat(feats, selfplay.SPKnobs(qmix_lambda=0.5), batch=8, T=24,
+                      seed=7)
+    off, _ = gen_flat(CFG.features, selfplay.SPKnobs(), batch=8, T=24, seed=7)
+    tm, to = mix["value_target"], off["value_target"]
+    differ = ~np.isclose(tm, to)
+    assert differ.any(), "qmix should change some non-terminal targets"
+    implied_rv = 2.0 * tm[differ] - to[differ]
+    assert np.abs(implied_rv).max() <= 1.0 + 1e-4, "implied root_v out of range"
+    print(f"ok qmix_targets (mixed rows: {int(differ.sum())})")
+
+
+def test_ml_steering_changes_play():
+    """ml_steer > 0 (with a moves_left head) changes played games; 0 is the
+    baseline (bit-identical path, covered by test_baseline_unchanged)."""
+    feats = dataclasses.replace(CFG.features, ml_steering=True,
+                                moves_left_head=True)
+    a, _ = gen_flat(feats, selfplay.SPKnobs(ml_steer=5.0), batch=8, T=24, seed=9)
+    b, _ = gen_flat(feats, selfplay.SPKnobs(ml_steer=0.0), batch=8, T=24, seed=9)
+    assert not np.array_equal(np.asarray(a["obs"]), np.asarray(b["obs"])), \
+        "steering at weight 5.0 must alter play"
+    print("ok ml_steering_changes_play")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

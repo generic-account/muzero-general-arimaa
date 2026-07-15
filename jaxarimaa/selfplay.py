@@ -34,6 +34,11 @@ class SPKnobs(typing.NamedTuple):
     prior_temp: float = 1.0       # >1 flattens priors fed to search (anti-sharpening)
     deblunder_threshold: float = 0.15
     deblunder_width: float = 0.15
+    # --- Stage-2.2 knobs (inert at defaults; see FeaturesConfig gates) ---
+    ml_steer: float = 0.0         # moves-left steering weight inside search
+    resolve_steps: int = 0        # policy-only rollout budget for truncated games
+    qmix_lambda: float = 1.0      # weight on OUTCOME in value target (1 = off)
+    handicap_frac: float = 0.0    # fraction of games starting a piece down
 
 
 def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
@@ -47,7 +52,8 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
     """
     num_sims, max_considered = mcts
     (resign_thresh, full_prob, fast_sims, greedy_after,
-     dense_k, surprise_w, prior_temp, db_thresh, db_width) = sp_knobs
+     dense_k, surprise_w, prior_temp, db_thresh, db_width,
+     ml_steer, resolve_steps, qmix_lambda, handicap_frac) = sp_knobs
     playout_cap = features is not None and features.playout_cap
     resign = features is not None and features.resign
     if features is not None and features.fast_search:
@@ -56,12 +62,36 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         search_impl = search
     rng, kinit = jax.random.split(rng)
     states = jax.vmap(jenv.init_state)(jax.random.split(kinit, batch))
+    if (features is not None and features.handicap_games
+            and handicap_frac > 0.0):
+        # KataGo-style handicap: a fraction of games start one NON-RABBIT piece
+        # down on a random side — decisive, honestly-labeled games at any
+        # strength (the outcome-signal source that never runs dry).
+        rng, kdo, kside, kpick = jax.random.split(rng, 4)
+        do = jax.random.uniform(kdo, (batch,)) < handicap_frac
+        side = jax.random.bernoulli(kside, 0.5, (batch,))       # True = silver
+        b = states.board                                        # [B,8,8] int8
+        cand = jnp.where(side[:, None, None],
+                         (b >= 8) & (b <= 12),                  # silver non-rabbit
+                         (b >= 2) & (b <= 6))                   # gold non-rabbit
+        g = jax.random.gumbel(kpick, b.shape)
+        flat = jnp.where(cand, g, -jnp.inf).reshape(batch, -1)
+        pick = jnp.argmax(flat, axis=-1)
+        removed = b.reshape(batch, -1).at[jnp.arange(batch), pick].set(0)
+        removed = removed.reshape(b.shape)
+        newb = jnp.where((do & jnp.any(cand, axis=(1, 2)))[:, None, None],
+                         removed, b)
+        # re-seed the repetition ring: init_state stored the un-handicapped hash
+        h0 = jax.vmap(lambda bb: jenv.position_hash(bb, jnp.int8(0)))(newb)
+        states = states.replace(
+            board=newb, turn_start_board=newb,
+            rep_hist=states.rep_hist.at[:, 0].set(h0))
 
     def _search(sims):
         def branch(operand):
             s, k = operand
             out = search_impl.run_search(model, params, k, s, sims, max_considered,
-                                         features, prior_temp)
+                                         features, prior_temp, ml_steer)
             root_cv = out.search_tree.children_values[:, 0]
             root_vis = out.search_tree.children_visits[:, 0] > 0
             # deblunder raw data: search Q of the played action vs the best
@@ -139,6 +169,8 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         if features is not None and features.deblunder:
             rec["q_chosen"] = q_chosen.astype(jnp.float32)
             rec["q_best"] = q_best.astype(jnp.float32)
+        if features is not None and features.qmix_value:
+            rec["root_v"] = root_v.astype(jnp.float32)  # mover-persp search value
         if surprise_w > 0.0:
             rec["weight"] = row_w.astype(jnp.float32)
         nstates = jax.vmap(jenv.step)(states, action)
@@ -183,18 +215,49 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
 
     (final_states, _), recs = jax.lax.scan(body, (states, rng), full_steps)
 
+    # Truncated-tail resolution (stage-2.2): finish cap-truncated games with
+    # search-free policy-only play (~1 net eval/step, ~50x cheaper than a
+    # searched step). A resolved game contributes a REAL outcome label; the
+    # false-0 "draw" labels of unfinished games were measured to teach the
+    # value head agnosticism (memory: warmstart-stage2).
+    res_done = jnp.zeros((batch,), bool)
+    res_out = jnp.zeros((batch,), jnp.float32)
+    if (features is not None and features.rollout_resolve
+            and resolve_steps > 0):
+        def rbody(s, _):
+            obs, legal = jax.vmap(
+                lambda st: jenv.observe_and_mask(st, features))(s)
+            logits, _, _ = jax.vmap(lambda o: model.apply(params, o))(obs)
+            a = jnp.argmax(jnp.where(legal, logits, -jnp.inf), axis=-1)
+            ns = jax.vmap(jenv.step)(s, a)
+            ns = jenv.where_state(s.terminated, s, ns)
+            return ns, None
+        rstates, _ = jax.lax.scan(rbody, final_states, None,
+                                  length=resolve_steps)
+        res_done = rstates.terminated
+        res_out = jnp.where(
+            res_done,
+            jnp.where(rstates.winner == final_states.player, 1.0, -1.0),
+            0.0).astype(jnp.float32)
+
     # Value carried into truncated tails: material/advancement adjudication (a
     # grounded, discriminative signal — breaks the self-confirming near-zero
     # bootstrap loop) or, when the feature is off, the net's own value.
     if features is not None and features.truncation_draw:
         # optima-style: hitting the step cap scores as a REAL draw (0), giving
-        # the value head a true (if bland) signal instead of a proxy.
-        boot_val = jnp.zeros((batch,), jnp.float32)
+        # the value head a true (if bland) signal instead of a proxy. Resolved
+        # games override the draw with their real rollout outcome.
+        boot_val = res_out
+        grounded0 = jnp.ones((batch,), bool)
     elif features is not None and features.adjudicate_truncation:
-        boot_val = jax.vmap(jenv.material_eval)(final_states)
+        boot_val = jnp.where(res_done, res_out,
+                             jax.vmap(jenv.material_eval)(final_states))
+        grounded0 = res_done
     else:
         fobs = jax.vmap(lambda s: jenv.observe(s, features))(final_states)
-        _, boot_val, _ = jax.vmap(lambda o: model.apply(params, o))(fobs)
+        _, net_boot, _ = jax.vmap(lambda o: model.apply(params, o))(fobs)
+        boot_val = jnp.where(res_done, res_out, net_boot)
+        grounded0 = res_done
 
     # Reverse scan producing, per step from the side-to-move perspective:
     #  value_target in [-1,1] (terminal -> outcome; else next value sign-flipped iff the
@@ -250,13 +313,22 @@ def _rollout(model, params, rng, batch, max_steps, mcts, features, sp_knobs):
         back,
         (final_states.player, boot_val.astype(jnp.float32),
          jnp.full(boot_val.shape, MLCAP, jnp.float32),
-         jnp.full(boot_val.shape,
-                  bool(features is not None and features.truncation_draw)),
+         grounded0,
          jnp.zeros((batch,), jnp.float32),   # db_v
          jnp.zeros((batch,), jnp.float32)),  # db_w
         scan_steps,
         reverse=True,
     )
+    if (features is not None and features.qmix_value
+            and qmix_lambda < 1.0):
+        # TD-style variance reduction (stage-2.2): mix the noisy realized
+        # outcome with the root search value at each position. At equal
+        # strength, outcomes are near coin flips; root-Q is a far lower-
+        # variance estimate. Terminal rows keep their exact outcome.
+        mix = (qmix_lambda * value_target
+               + (1.0 - qmix_lambda) * recs["root_v"])
+        value_target = jnp.where(recs["term"], value_target, mix)
+
     # value_target is the standard MC game-outcome target (terminal -> +/-1,
     # non-terminal -> outcome from that mover's view, truncated tail -> adjudicated
     # bootstrap). The old search-root-value blend was a cold-start crutch (pure
