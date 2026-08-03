@@ -323,3 +323,48 @@ exactness, validity on all rows including the off-schedule fallback).
 `seq_halving.py` as a documented utility (RLE of the existing schedule — trivially
 reviewable, no semantics change) and publish the policy as a small companion
 package. The utility is the load-bearing insight; the rest is mechanism.
+
+---
+
+## 7. Dev environment (set up 2026-08, verified)
+
+| Item | Value |
+|---|---|
+| Fork | `generic-account/mctx` at `/Users/glichtstein/Documents/mctx` |
+| Remotes | `origin` → fork (SSH), `upstream` → `google-deepmind/mctx` (HTTPS) |
+| Sync | fork `main` == `upstream/main` == **`450fbf7`** — the exact SHA our code was validated against |
+| Branch | `batched-gumbel-policy` |
+| Venv | `/tmp/mctx-dev` (`pip install --editable ".[test]"` + pytest/pytest-xdist/flake8/pylint/pylint-exit). Recreate: `python3 -m venv /tmp/mctx-dev && /tmp/mctx-dev/bin/pip install -e ".[test]" pytest pytest-xdist flake8 pylint pylint-exit` |
+| Baseline | **24/24 pytest**, **pylint 10.00/10**, **flake8 0 issues** on the pristine fork |
+
+**Running their suite correctly:** `tree_test.py` opens
+`../mctx/_src/tests/test_data/*.json` by *relative* path, so pytest must run from
+a directory one level inside the repo root — that is why `test.sh` does
+`mkdir _testing && cd _testing`. Running from anywhere else yields 4 spurious
+`FileNotFoundError` failures.
+
+### CI bar our module must clear (from `test.sh`)
+
+1. `flake8 --select=E9,F63,F7,F82,E225,E251` — currently 0 issues repo-wide.
+2. **`pylint --rcfile=.pylintrc -efail -wfail -cfail`** — fails on errors,
+   warnings **and conventions**. Their own files score a clean **10.00/10**, so
+   that is the bar, not "no errors".
+3. `pytype -j auto --keep-going --disable import-error`.
+4. `pytest --pyargs mctx`.
+5. A clean-room `python -m build` + wheel install.
+
+### House-style deltas our module needs (from `.pylintrc`)
+
+- **`indent-string='  '` — mctx is TWO-SPACE indented; `mctx_batched.py` is
+  four-space.** A full mechanical reindent is required, plus
+  `indent-after-paren=4` for continuations.
+- `max-line-length=80`.
+- Docstrings on every public symbol (pylint conventions are fatal here).
+- chex annotations + asserts to match density (their files: 8–12 `chex.assert*`,
+  9–20 `chex.Array/Numeric/PRNGKey` annotations each; ours: **0 and 0**).
+
+### Non-code blocker
+
+`CONTRIBUTING.md` requires a signed **Google CLA** (<https://cla.developers.google.com/>)
+before any PR can be merged. One-time, per-person, and needs to be done by the
+contributor — not something that can be handled in-repo.
