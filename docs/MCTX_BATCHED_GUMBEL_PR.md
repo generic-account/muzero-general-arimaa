@@ -198,7 +198,87 @@ assert this in the PR without quoting the paper.
    now mirrors #116 (`path_parents`, `path_actions`, …) so a reviewer reads it as
    their function extended.
 
-## 6. Recommended PR strategy
+---
+
+## 6a. Component audit — what the PR literally contains
+
+`jaxarimaa/mctx_batched.py`, 551 lines including docstrings:
+
+| component | lines | classification |
+|---|---|---|
+| `_rounds_from_schedule` | 19 | **Novel. The load-bearing insight** — RLE of mctx's own visit schedule into `(cv, width)` rounds. |
+| `_mask_invalid_actions` | 9 | **Duplicate.** Logic identical to `mctx._src.policies._mask_invalid_actions` (ours is a reindent minus their `chex.assert_equal_shape`). On upstream: import theirs, delete ours. |
+| `_write_nodes_batched` | 41 | Novel. `expand` + `update_tree_node` tails for a whole round: K per-array scatters → one. |
+| `_backward_batched` | 105 | **K-leaf generalization of PR #116's technique** (see below). |
+| `_completed_q_and_score_subset` | 59 | Novel optimization: reproduces the default qtransform's global terms from the `considered` columns, so per-round root scoring is O(m) not O(num_actions). Now directly gated (§6b). |
+| `_make_forced_simulate` | 55 | Novel. `simulate` with a forced depth-0 action, doubly-vmapped `[K, B]` lockstep. |
+| `batched_gumbel_muzero_policy` | 162 | Public entry point. Signature parity with `gumbel_muzero_policy`: **10 of 11 params**, only `loop_fn` absent (no `fori_loop` to parameterize). |
+
+**mctx surface consumed:** `Tree` (+ its `ROOT_INDEX`/`UNVISITED`/`NO_PARENT`),
+`score_considered`, `get_sequence_of_considered_visits`,
+`instantiate_tree_from_root`, `gumbel_muzero_interior_action_selection`,
+`masked_argmax`, `GumbelMuZeroExtraData`, `qtransform_completed_by_mix_value`,
+`PolicyOutput`. All in `_src` — which is *why upstreaming is the right home*: as
+an external package we must reach into mctx internals (fragile across releases);
+inside mctx these are ordinary internal calls.
+
+## 6b. DECISION: independent additive PR — do **not** base on #116
+
+The audit settles this with a fact I had assumed the other way earlier. Our only
+**call** into `search.py` is `instantiate_tree_from_root` (one line). The
+`expand`/`backward`/`simulate` mentions in this module are *docstrings* naming
+what each function mirrors — not invocations; the round-batched loop never calls
+`search.search`, `search.expand`, `search.backward`, or `search.simulate`.
+
+PR #116's diff is two hunks, both inside the `backward` region (`@@ -246,6` adds
+`_BackwardState`; `@@ -259,40` rewrites `backward`). It does not touch
+`instantiate_tree_from_root` or anything else we consume.
+
+⇒ **Zero shared modified code. Zero merge conflict. Zero dependency.** Our PR is
+purely additive: one new module.
+
+Rejected alternatives, with reasons:
+- *Branch off #116.* Couples our merge to an unmerged PR and forces rebases if
+  theirs changes in review, for no technical benefit — we don't use their code.
+- *Unify the two backwards into one function serving K=1 and K>1.* Their
+  single-leaf `.set()` path is simpler and cheaper for K=1; generalizing would
+  impose scatter-add and closed-form-mean overhead on the sequential path and
+  balloon the review surface. If a maintainer wants unification later, it is a
+  clean follow-up, not a precondition.
+
+What we **do** owe #116: a citation in the PR body crediting the independently
+derived path-record + single-scatter technique, and an explicit statement that
+the two changes compose (they speed up the sequential loop's backward; we reduce
+how many sequential steps exist at all).
+
+## 6c. Pre-PR checklist
+
+- [ ] **`lax.scan` grouping of same-width rounds.** The round loop is a Python
+      `for`, so bodies unroll (27 at `(128,32)`, 155 at `(800,32)`). Group
+      consecutive equal-width runs into a `scan` over a stacked `cv` vector →
+      ~5 traced bodies. The only substantive code change still owed; also the
+      one axis where we would otherwise regress while #116 improves.
+- [ ] Chunking knob (`max_lanes_per_call`) — `[B*w]` uses `w×` the activation
+      memory of mctx's `[B]` call; can OOM a large dynamics net.
+- [ ] Import mctx's `_mask_invalid_actions`; delete our copy.
+- [ ] Decide `loop_fn`: accept-and-ignore with a docstring note, or reject.
+- [ ] Test `gumbel_scale=0.0` (perfect-information eval) — it makes scores
+      exactly tied, the worst case for divergence class (b).
+- [x] **Direct gate on `_completed_q_and_score_subset`** (commit `297a0a1`).
+      The audit found this 59-line hand-derived algebra was **untested**: the
+      drift-free exactness test passes `functools.partial(qtransform,
+      value_scale=0.0)`, which fails the `is qtransform_completed_by_mix_value`
+      identity check and therefore takes the general full-width branch, never
+      the subset path. Under the default transform the subset path *is* live but
+      divergence from mctx is expected anyway, so a bug there could have hidden
+      as "drift". Added test compares the subset scores against
+      `score_considered(vmap(qtransform)(...))` on a tree mctx itself built:
+      **max|diff| = 0.0e+00 across cv ∈ {1,2,3,4}, `-inf` masks matching.** The
+      algebra is exactly right — it just had no guard.
+- [ ] Chex type annotations to match mctx house style.
+- [ ] Standalone mctx-only benchmark (needed for the issue regardless).
+
+## 6d. Recommended PR strategy
 
 **Step 1 — Issue first, not a PR.** The change is large and raises a semantics
 question (divergence class (b)) that only a maintainer can rule on. Open an issue
