@@ -41,11 +41,13 @@ import tempfile
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import mctx
 from mctx._src import qtransforms as mctx_qtransforms
 
 from jaxarimaa import env as jenv
 from jaxarimaa import fast_search
+from jaxarimaa import mctx_batched
 from jaxarimaa import network
 from jaxarimaa import search as slow_search
 from jaxarimaa.config import NetConfig
@@ -93,15 +95,26 @@ def make_model_and_params(key, states):
 def load_v1():
     """Load the pre-v2 fast_search (git HEAD version) as a standalone module."""
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    try:
-        src = subprocess.check_output(
-            ["git", "-C", repo, "show", "HEAD:jaxarimaa/fast_search.py"],
-            text=True)
-    except Exception as exc:  # pragma: no cover
-        print(f"  [note] cannot load v1 from git HEAD: {exc}")
-        return None
-    if "_write_nodes_batched" in src:
-        print("  [note] git HEAD already contains v2; skipping v1 baseline")
+    # The v2 policy lived in fast_search.py until commit a01f659, then moved to
+    # mctx_batched.py. Check BOTH for the v2 marker: if either has it, HEAD is
+    # already v2 and there is no v1 baseline to compare against. (Before this
+    # guard was widened, the refactor made it miss the marker and then try to
+    # exec the post-refactor fast_search.py — which is now a glue module with a
+    # relative import — standalone, crashing the suite.)
+    src = None
+    for path in ("jaxarimaa/mctx_batched.py", "jaxarimaa/fast_search.py"):
+        try:
+            text = subprocess.check_output(
+                ["git", "-C", repo, "show", f"HEAD:{path}"], text=True)
+        except Exception:
+            continue
+        if "_write_nodes_batched" in text:
+            print("  [note] git HEAD already contains v2; skipping v1 baseline")
+            return None
+        if path == "jaxarimaa/fast_search.py":
+            src = text
+    if src is None:
+        print("  [note] no pre-v2 fast_search.py at HEAD; skipping v1 baseline")
         return None
     path = os.path.join(tempfile.mkdtemp(prefix="fsv1_"), "fast_search_v1.py")
     with open(path, "w") as f:
@@ -185,7 +198,7 @@ def check_case(model, params, states, key, n, m, v1_mod):
     # --- 2) tree-mechanics exactness vs mctx (drift-free qtransform).
     out_ref0 = run_policy(mctx.gumbel_muzero_policy, model, params, key,
                           states, n, m, qtransform=QT_DRIFT_FREE)
-    out_v20 = run_policy(fast_search.batched_gumbel_muzero_policy, model,
+    out_v20 = run_policy(mctx_batched.batched_gumbel_muzero_policy, model,
                          params, key, states, n, m, qtransform=QT_DRIFT_FREE)
     v_ref0 = out_ref0.search_tree.children_visits[:, ROOT]
     v_v20 = out_v20.search_tree.children_visits[:, ROOT]
@@ -236,6 +249,68 @@ def check_case(model, params, states, key, n, m, v1_mod):
     return fails, int(on_sched.size), int(rows.size), n_pre_existing, werr, verr
 
 
+def check_subset_score_algebra(model, params, states, key, n=32, m=8):
+    """Direct algebraic gate on `_completed_q_and_score_subset`.
+
+    That function hand-derives mctx's `score_considered(vmap(qtransform)(...))`
+    over just the `considered` columns, reproducing the transform's GLOBAL terms
+    (mixed value, rescale min/max, visit_scale, full-width logit max) from the
+    subset. Nothing else in this suite covers it: the drift-free exactness test
+    passes `functools.partial(qtransform, value_scale=0.0)`, which fails the
+    `qtransform is qtransform_completed_by_mix_value` identity check and so takes
+    the general full-width branch. Under the DEFAULT transform, where the subset
+    path IS active, divergence from mctx is expected for other reasons — so a bug
+    in this algebra could hide as "drift". Hence this test, against a tree that
+    mctx itself built.
+    """
+    from mctx._src import seq_halving as _sh
+    prior, value, legal, _ = slow_search._eval(model, params, states, None)
+    out = mctx.gumbel_muzero_policy(
+        params=params, rng_key=key,
+        root=mctx.RootFnOutput(prior_logits=prior, value=value,
+                               embedding=states),
+        recurrent_fn=slow_search.make_recurrent_fn(model, None, 1.0),
+        num_simulations=n, invalid_actions=~legal,
+        max_num_considered_actions=m)
+    tree = out.search_tree
+    visits_np = np.asarray(tree.children_visits[:, ROOT])
+    # `considered` must be visited actions (the function's stated precondition):
+    # take top-m by visit count, then sort by action id as the policy does.
+    order = np.argsort(-visits_np, axis=-1)[:, :m]
+    considered = jnp.asarray(np.sort(order, axis=-1))
+    if not (np.take_along_axis(visits_np, np.asarray(considered), 1) > 0).all():
+        return [f"precondition unmet: fewer than m={m} visited root actions"]
+
+    root_logits = tree.children_prior_logits[:, ROOT]
+    gumbel = tree.extra_data.root_gumbel
+    logit_max_full = jnp.max(root_logits, axis=-1)
+    considered_prior = jnp.take_along_axis(
+        jax.nn.softmax(root_logits, axis=-1), considered, axis=1)
+    gumbel_sub = jnp.take_along_axis(gumbel, considered, axis=1)
+    batch_range = jnp.arange(states.player.shape[0])
+
+    completed_full = jax.vmap(mctx_qtransforms.qtransform_completed_by_mix_value,
+                              in_axes=[0, None])(tree, ROOT)
+    fails = []
+    for cv in (1, 2, 3, 4):
+        scores_full = _sh.score_considered(
+            cv, gumbel, root_logits, completed_full,
+            tree.children_visits[:, ROOT])
+        ref = np.asarray(jnp.take_along_axis(scores_full, considered, axis=1))
+        got = np.asarray(mctx_batched._completed_q_and_score_subset(
+            tree, batch_range, considered, gumbel_sub, considered_prior, cv,
+            logit_max_full))
+        if not (np.isinf(ref) == np.isinf(got)).all():
+            fails.append(f"subset algebra: -inf penalty mask mismatch at cv={cv}")
+            continue
+        fin = np.isfinite(ref) & np.isfinite(got)
+        if fin.any():
+            d = float(np.abs(ref[fin] - got[fin]).max())
+            if d > 1e-5:
+                fails.append(f"subset algebra: max|diff|={d:.3e} at cv={cv}")
+    return fails
+
+
 def main():
     key = jax.random.PRNGKey(7)
     kstate, kmodel, ksearch = jax.random.split(key, 3)
@@ -249,6 +324,7 @@ def main():
         print("v1 baseline loaded from git HEAD")
 
     all_ok = True
+    v1_col = "exact" if v1_mod is not None else "n/a"
     print(f"{'n':>4} {'m':>4} {'rows>=m':>8} {'v1==v2':>7} {'mctx@vs0':>9} "
           f"{'mctx-rows':>10} {'drifted':>8} {'max|dw|':>10} {'max|dv|':>10}  status")
     for i, (n, m) in enumerate(NM_CASES):
@@ -257,10 +333,18 @@ def main():
             model, params, states, case_key, n, m, v1_mod)
         status = "PASS" if not fails else "FAIL"
         all_ok &= not fails
-        print(f"{n:>4} {m:>4} {n_sched:>8} {'exact':>7} {'exact':>9} "
+        print(f"{n:>4} {m:>4} {n_sched:>8} {v1_col:>7} {'exact':>9} "
               f"{n_match:>10} {n_drift:>8} {werr:>10.2e} {verr:>10.2e}  {status}")
         for f in fails:
             print(f"       - {f}")
+
+    sub_fails = check_subset_score_algebra(
+        model, params, states, jax.random.fold_in(ksearch, 99))
+    all_ok &= not sub_fails
+    print(f"subset-score algebra vs mctx full-width: "
+          f"{'exact' if not sub_fails else 'FAIL'}")
+    for f in sub_fails:
+        print(f"       - {f}")
 
     print("ALL PASS" if all_ok else "FAILURES PRESENT")
     return 0 if all_ok else 1
