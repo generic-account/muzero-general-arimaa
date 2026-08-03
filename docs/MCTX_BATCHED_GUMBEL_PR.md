@@ -1,7 +1,10 @@
 # Upstreaming `batched_gumbel_muzero_policy` to mctx — design spec
 
 Status: **spec / pre-PR**. Target: `google-deepmind/mctx` @ `main`.
-Source: `jaxarimaa/fast_search.py` (v2 path) + `jaxarimaa/tests_fast_search_v2.py`.
+Source: **`jaxarimaa/mctx_batched.py`** (551 lines, pure jax + mctx, zero project
+imports — programmatically asserted) + `jaxarimaa/tests_fast_search_v2.py`.
+Project glue lives separately in `jaxarimaa/fast_search.py` (106 lines).
+Extraction is **done**: the module is lift-and-drop ready.
 
 ---
 
@@ -10,10 +13,12 @@ Source: `jaxarimaa/fast_search.py` (v2 path) + `jaxarimaa/tests_fast_search_v2.p
 | Fact | Value |
 |---|---|
 | mctx stars / open issues | 2,649 / 7 |
-| Last push / release | 2026-07-09 / v0.1.9 (2026-06-12) |
+| Last push | 2026-07-09 (`main` @ `450fbf7656b88dd1d8ca5b2db3a2f9464cb322f2`) |
+| **Newest *installable* version** | **0.0.71** — what we pin. The "Release v0.1.9" commit (2026-06-12) never published: no `v0.1.9` git tag, PyPI's latest is 0.0.71, and a "Fix the pypi release hook" commit followed three days later. There is no newer release to port to. |
 | Archived | No |
 | Semantic drift in `_src/{search,action_selection,qtransforms,tree}.py` since our pinned 0.0.71 | **None.** Every diff is a `# pyrefly: ignore[...]` type-suppression comment. `seq_halving.py` and `base.py` byte-identical. |
 | Every symbol we depend on present on `main` | Yes (`score_considered`, `get_sequence_of_considered_visits`, `instantiate_tree_from_root`, `gumbel_muzero_interior_action_selection`, `qtransform_completed_by_mix_value`, `Tree`, `masked_argmax`, `GumbelMuZeroExtraData`, `PolicyOutput`) |
+| Public API (`mctx/__init__.py`) main vs pinned | **Byte-identical** |
 
 **The search algorithm has not changed in ~2 years.** A PR written against our pinned
 copy applies to `main` essentially unmodified.
@@ -177,9 +182,21 @@ assert this in the PR without quoting the paper.
    docstring note or reject it explicitly.
 4. **`gumbel_scale=0.0`** (used for perfect-information eval) should be tested — it
    makes many scores exactly tied, which is precisely the regime where (b) bites.
-5. **Extraction hygiene.** Ship only the v2 path. Exclude: `pack_states`/`unpack_states`
-   (project-specific state packing), the entire v3 `compact_*` path (built, proven
-   exact, measured **12% slower** — do not upstream), and `_backward_batched` (→ #116).
+5. **Extraction hygiene — COMPLETE (commit `a01f659`).** `mctx_batched.py` now holds
+   only the v2 path and is verified free of project imports. `pack_states`/`unpack_states`
+   and `run_search` moved to `fast_search.py`. The v3 `compact_*` path (built, proven
+   exact, measured **12% slower**) was deleted from the live tree — recoverable at
+   commit `e78e180` if bigger nets ever change the tradeoff.
+
+   On `_backward_batched` vs #116: keep ours, but as a *documented generalization*.
+   Theirs is single-leaf, where each path node has exactly one visitor, so plain
+   `.set()` scatters reproduce sequential semantics. Round batching needs K leaves
+   sharing the root, which forces scatter-**add** visit counts and the associative
+   closed form for the root value. Round batching also affords a tighter footprint
+   than #116 can reach: a leaf expanded in round *r* is at depth ≤ *r*+1, so the path
+   scan is bounded by a static `num_hops` rather than `[num_nodes]` scratch. Naming
+   now mirrors #116 (`path_parents`, `path_actions`, …) so a reviewer reads it as
+   their function extended.
 
 ## 6. Recommended PR strategy
 
