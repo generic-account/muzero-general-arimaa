@@ -253,11 +253,32 @@ how many sequential steps exist at all).
 
 ## 6c. Pre-PR checklist
 
-- [ ] **`lax.scan` grouping of same-width rounds.** The round loop is a Python
-      `for`, so bodies unroll (27 at `(128,32)`, 155 at `(800,32)`). Group
-      consecutive equal-width runs into a `scan` over a stacked `cv` vector →
-      ~5 traced bodies. The only substantive code change still owed; also the
-      one axis where we would otherwise regress while #116 improves.
+- [x] **`lax.scan` grouping of same-width rounds — DONE (commit `db4e2c1`).**
+      Round 0 is peeled (it needs the full-width path and establishes the
+      `considered` bookkeeping); the remaining rounds are grouped into
+      consecutive same-width runs, each run scanned over a stacked `cv` vector
+      with one traced body. The schedule's widths are non-increasing, so
+      grouping-by-run == grouping-by-width. Each group uses ONE static hop bound
+      taken from its deepest round; over-running the backward walk is exact
+      (lanes deactivate at the root and their records are dropped by the masked
+      scatter), it only costs a few extra `[B, K]` gathers on a group's earlier
+      rounds. **Verified bitwise identical to the unrolled version** across 36
+      arrays (action / action_weights / visit_counts / node_values /
+      children_values / children_visits) × 3 `(n,m)` × 2 steering settings.
+
+      Measured (CPU lowering, tiny net, so numbers isolate graph size):
+
+      | n/m | rounds | StableHLO lines | optimized HLO | compile |
+      |---|---|---|---|---|
+      | 32/16 | 4 | 12,127 → 9,575 (1.3×) | 20,602 → 17,501 | 1.6 s → 1.3 s |
+      | 128/32 | 27 | 72,570 → 15,543 (**4.7×**) | 125,469 → 27,566 | 8.4 s → 2.2 s (3.8×) |
+      | 800/32 | 155 | 404,906 → 18,170 (**22.3×**) | 708,688 → 32,978 (21.5×) | 77.9 s → 2.7 s (**28.9×**) |
+
+      The structural point matters more than any single row: graph size now grows
+      **1.9×** from n=32 to n=800, versus **33.4×** unrolled. This converts the
+      one axis where we would have regressed relative to #116 (which reports
+      60 s → 22 s at 64 sims) into a decisive advantage, and it makes large
+      simulation budgets practical at all.
 - [ ] Chunking knob (`max_lanes_per_call`) — `[B*w]` uses `w×` the activation
       memory of mctx's `[B]` call; can OOM a large dynamics net.
 - [ ] Import mctx's `_mask_invalid_actions`; delete our copy.
