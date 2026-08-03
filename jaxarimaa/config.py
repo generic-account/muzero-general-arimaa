@@ -57,13 +57,6 @@ class FeaturesConfig:
                                        # piece down: decisive, honestly-labeled
                                        # games at ANY strength (KataGo handicap)
     fast_search: bool = False          # batched sequential halving (wave-parallel Gumbel; see fast_search.py)
-    compact_search: bool = False       # v3: no full-width children tables (kills the
-                                       # [B,129,1393] layout transposes + gathers that
-                                       # dominated the s2pilot round-2 trace); interior
-                                       # selection over per-node candidate subsets.
-                                       # Requires fast_search. Exact under drift-free
-                                       # qtransform; fp-reassociation drift (documented
-                                       # v1/v2 category) under the default one.
     # --- architecture (auxiliary heads) ---
     moves_left_head: bool = False      # aux head predicting (normalized) plies to game end
     deep_supervision: bool = False     # intermediate policy/value heads (deep supervision)
