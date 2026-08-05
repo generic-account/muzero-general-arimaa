@@ -368,3 +368,47 @@ a directory one level inside the repo root — that is why `test.sh` does
 `CONTRIBUTING.md` requires a signed **Google CLA** (<https://cla.developers.google.com/>)
 before any PR can be merged. One-time, per-person, and needs to be done by the
 contributor — not something that can be handled in-repo.
+
+---
+
+## 8. Measured on TPU (v5e-4, 2026-08)
+
+`tools/bench_mctx_policy.py` (mctx + jax only, no project deps).
+Shape: `batch=256, num_actions=1393, n=200, m=32, embed=64`, cheap
+`recurrent_fn` so tree ops dominate. Medians of 5 reps, reproduced by an
+independent 9-rep run to within 0.1 ms.
+
+| implementation | time | vs `gumbel_muzero_policy` |
+|---|---|---|
+| `gumbel_muzero_policy` | 3090.6 ms | — |
+| **batched (int32 edge mirror, 2 bitcasts)** | **836.2 ms** | **3.70x** |
+| batched (float32 edge mirror) | 846.0 ms | 3.65x |
+| batched (two natively-typed mirrors) | 857.9 ms | 3.60x |
+
+**The headline number for the issue/PR is 3.70x**, measured, at 4.3x fewer
+`recurrent_fn` calls (200 -> 46 rounds).
+
+### Why the edge mirror packs two dtypes into one int32 row
+
+The backward walk needs `(parent, action, reward, discount)` per hop. Three
+designs were built and measured; all three produce bitwise-identical search
+output. The chosen one is the fastest *and* exact:
+
+- **int32, indices native + floats bitcast (chosen)** — 48 gathers, 46 scatters.
+- **two natively-typed arrays** — no bitcasts, cleanest code, but +3 gathers and
+  +3 scatters, **2.6% slower**. The `as_bits`/`_read_edge_record` juggling is
+  therefore a measured tradeoff, not an accident.
+- **single float32 array** — 1.2% slower again, *and* silently lossy above
+  `2**24` because `action` is bounded only by `num_actions`. Dominated on both
+  axes; rejected.
+
+### Notes / caveats
+
+- A config at `n=800` with an expensive `recurrent_fn` and `batch=256` OOM'd on
+  a v5e chip — but it failed inside **`gumbel_muzero_policy`**, because mctx's
+  own `[B, num_nodes, num_actions]` tables are ~6.9 GB at that shape. It
+  constrains both implementations equally and says nothing about the batched
+  policy's memory profile.
+- Consequently `max_lanes_per_call` (the `[B * width]` chunking knob) is still
+  **untested on hardware**; the OOM above is not evidence for it. Needs a shape
+  where the tree fits but the widened recurrent_fn batch does not.
